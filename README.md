@@ -299,9 +299,9 @@ plot_pr({"VanillaAE": result_vanilla, "VAE": result_vae}, save_path="outputs/fig
 | Kaan     | Implement β-VAE (Conv1d encoder/decoder, latent_dim=32, β=0.1/0.5/1.0). Must extend `BaseAutoencoder`. Centralised training, anomaly scoring (MSE + KL), evaluate with `compute_metrics()` | `models/vae.py`, `configs/vae_config.py`, `training/train_vae.py` | Import works: `from models.vae import VAE` and β sweep produces 3 result rows in CSV |
 | Raheeb   | Install Flower, build server config (FedAvg), create client class template with fit()/evaluate(), test end-to-end with a dummy model | `fl/flower_client.py`, `fl/flower_server.py` | `python fl/flower_server.py --dry-run` completes without error |
 | Ghadah   | (Assessment 1) Design computation efficiency measurement framework, define metrics (size/FLOPs/latency/memory/power), compile Assessment 1 document | `paper/assessment1/` | Assessment 1 PDF ready by 6 Mar morning |
-| Sarah    | (Assessment 1) Write literature review (500–700 words, 3 thematic subsections), include gap matrix table | `paper/assessment1/`, `paper/references.bib` | Literature review section complete in LaTeX |
+| Maha    | (Assessment 1) Write literature review (500–700 words, 3 thematic subsections), include gap matrix table | `paper/assessment1/`, `paper/references.bib` | Literature review section complete in LaTeX |
 | Hilal    | (Assessment 1) Write proposal section (research problem + 4 research questions RQ1–RQ4), justify significance | `paper/assessment1/` | Proposal section complete, 4 RQs clearly stated |
-| Maha     | (Assessment 1) System architecture diagram, component diagram, UML activity diagram, support blockers | `paper/assessment1/`, `paper/diagrams/` | Diagrams exportable as PDF/PNG, Assessment 1 draft compiled |
+| Sarah     | (Assessment 1) System architecture diagram, component diagram, UML activity diagram, support blockers | `paper/assessment1/`, `paper/diagrams/` | Diagrams exportable as PDF/PNG, Assessment 1 draft compiled |
 
 ---
 
