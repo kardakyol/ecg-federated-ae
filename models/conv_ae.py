@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from models.base import BaseAutoencoder, AEOutput
 
@@ -42,9 +43,12 @@ class ConvAE(BaseAutoencoder):
         self.enc_gn4 = nn.GroupNorm(num_groups=min(32, 256), num_channels=256)
         self.enc_act4 = nn.ReLU(inplace=False)
 
-        self._enc_temporal = seq_len
+        curr_len = seq_len
         for k, s, p in [(7, 2, 3), (7, 2, 3), (5, 2, 2), (5, 2, 2)]:
-            self._enc_temporal = math.floor((self._enc_temporal + 2*p - k) / s) 
+            curr_len = math.floor((curr_len + 2*p - k) / s) + 1
+        
+        self._enc_temporal = curr_len 
+        self._enc_flat_dim = 256 * self._enc_temporal
 
         # Flatten -> FC bottleneck
         self._enc_flat_dim = 256 * 63  
@@ -94,7 +98,7 @@ class ConvAE(BaseAutoencoder):
 
         # Decode
         h = self.dec_fc_act(self.dec_fc(z))                     
-        h = h.view(-1, 256, self._enc_temporal)
+        h = h.view(h.size(0), 256, -1)
 
         h = self.dec_act1(self.dec_gn1(self.dec_conv1(h)))      
         h = self.dec_act2(self.dec_gn2(self.dec_conv2(h)))      

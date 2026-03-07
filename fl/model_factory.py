@@ -1,9 +1,17 @@
-import torch 
+"""
+RAHEEB: Model factory for FL pipeline.
+
+Sprint 1: All model types returned DummyAE for pipeline testing.
+Sprint 2: Real models now active — VanillaAE, ConvAE, VAE.
+"""
+
+import torch
 import torch.nn as nn
 from models.base import BaseAutoencoder, AEOutput
-#from models.vanilla_ae import VanillaAE
-#from models.conv_ae import ConvAE
-#from models.vae import VAE
+from models.vanilla_ae import VanillaAE
+from models.conv_ae import ConvAE
+from models.vae import VAE
+
 
 class DummyAE(BaseAutoencoder):
     """Minimal AE for FL pipeline testing. NOT for real experiments."""
@@ -26,18 +34,25 @@ class DummyAE(BaseAutoencoder):
         loss = nn.functional.mse_loss(output.x_hat, x)
         return (loss,)
 
+
 def get_model(model_name: str):
+    """Return a model instance by name.
+
+    Args:
+        model_name: "vanilla", "conv", "vae", or "dummy"
+
+    Returns:
+        BaseAutoencoder instance
+    """
     name = model_name.lower()
 
     if name == "vanilla":
-        #return VanillaAE()
-        return DummyAE()
+        return VanillaAE(bottleneck=32)
     elif name == "conv":
-        #return ConvAE()
-        return DummyAE()
+        return ConvAE(bottleneck=32)
     elif name == "vae":
-        #return VAE()
+        return VAE()
+    elif name == "dummy":
         return DummyAE()
-    
-    raise ValueError(f"Model type '{model_name}' not recognised.")
 
+    raise ValueError(f"Model type '{model_name}' not recognised. Choose from: vanilla, conv, vae, dummy")
