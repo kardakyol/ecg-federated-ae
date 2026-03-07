@@ -12,6 +12,11 @@ coverage==7.13.4
 cryptography==44.0.3
 cycler==0.12.1
 -e git+https://github.com/kardakyol/ecg-federated-ae.git@4d68540d2ac8d582b864169af7ea813c7f5032c3#egg=ecg_federated_ae
+charset-normalizer==3.4.5
+click==8.3.1
+contourpy==1.3.3
+cryptography==44.0.3
+cycler==0.12.1
 filelock==3.25.0
 flatbuffers==25.12.19
 flwr==1.26.1
@@ -64,9 +69,10 @@ rich==13.9.4
 rpds-py==0.30.0
 scikit-learn==1.8.0
 scipy==1.17.1
+soundfile==0.13.1
+setuptools==82.0.0
 shellingham==1.5.4
 six==1.17.0
-soundfile==0.13.1
 SQLAlchemy==2.0.48
 sympy==1.14.0
 threadpoolctl==3.6.0
