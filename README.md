@@ -129,9 +129,62 @@ ecg-federated-ae/
 
 ---
 
+## Data Setup (EVERYONE — do this to get the dataset)
+
+### Step 1: Download raw PTB-XL
+
+Download the PTB-XL dataset from Kaggle:
+**https://www.kaggle.com/datasets/garethwmch/ptb-xl-1-0-3?resource=download**
+
+1. Go to the link above and click **Download**
+2. Extract the downloaded zip
+3. Place the extracted contents into `data/ptb-xl-raw/` so the structure looks like:
+
+```
+data/ptb-xl-raw/
+  ptbxl_database.csv
+  scp_statements.csv
+  records100/
+  records500/
+  ...
+```
+
+### Step 2: Run preprocessing
+
+```bash
+python scripts/preprocess_ptbxl.py --raw_dir data/ptb-xl-raw --output_dir data/ptb-xl --seed 42
+```
+
+This applies bandpass filtering (0.05-45 Hz), baseline wander removal, min-max normalisation per lead, binary label encoding (NORM=0, abnormal=1), and patient-level train/val/test split (70/15/15).
+
+### Step 3: Run non-IID client partitioning
+
+```bash
+python scripts/partition_clients.py --data_dir data/ptb-xl --alpha 0.5 --num_clients 10 --seed 42
+```
+
+This creates Dirichlet-distributed client splits for federated learning and saves a per-client distribution histogram to `outputs/figures/client_distribution.pdf`.
+
+### Step 4: Validate
+
+```bash
+python scripts/validate_data.py --data_dir data/ptb-xl
+```
+
+You should see:
+```
+  OK train: 14233 samples (6294 normal, 7939 abnormal)
+  OK val: 3078 samples (1337 normal, 1741 abnormal)
+  OK test: 3062 samples (1407 normal, 1655 abnormal)
+
+All checks passed!
+```
+
+---
+
 ## Data Contract (Ghouse → Everyone)
 
-Ghouse saves preprocessed PTB-XL data to `data/ptb-xl/`. Everyone else loads it via:
+Preprocessed PTB-XL data lives in `data/ptb-xl/`. Everyone else loads it via:
 
 ```python
 from utils.dataset import load_splits, create_dataloaders
@@ -144,7 +197,7 @@ loaders = create_dataloaders(splits, batch_size=128)
 # loaders["test"]       → all samples (for final evaluation)
 ```
 
-### Required file format from Ghouse:
+### File format:
 
 | File                    | dtype      | Shape           | Notes                            |
 |-------------------------|------------|-----------------|----------------------------------|
@@ -155,13 +208,7 @@ loaders = create_dataloaders(splits, batch_size=128)
 | `test_signals.npy`     | float32    | (N, 12, 1000)   |                                  |
 | `test_labels.npy`      | int64      | (N,)            |                                  |
 
-### Ghouse: after preprocessing, validate your output:
-```bash
-python scripts/validate_data.py --data_dir data/ptb-xl
-```
-This checks dtype, shape, NaN/Inf, label encoding, and length matching. All checks must pass before anyone else can use the data.
-
-### Before Ghouse's data is ready, everyone else can test with synthetic data:
+### Before the real data is ready, you can test with synthetic data:
 ```python
 from utils.dataset import create_synthetic_data, create_dataloaders
 

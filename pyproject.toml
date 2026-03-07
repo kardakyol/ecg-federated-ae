@@ -13,10 +13,12 @@ dependencies = [
     "scikit-learn>=1.3.0",
     "matplotlib>=3.7.0",
     "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "wfdb>=4.0.0",
 ]
 
 [project.optional-dependencies]
-fl = ["flwr>=1.5.0"]
+fl = ["flwr[simulation]>=1.5.0"]
 dp = ["opacus>=1.4.0"]
 quant = ["onnxruntime>=1.15.0"]
 edge = ["ptflops>=0.7.0"]
