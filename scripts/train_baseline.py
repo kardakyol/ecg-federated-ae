@@ -1,3 +1,12 @@
+"""
+SHARDUL: Centralised AE training script for Vanilla AE and Conv AE.
+
+Usage:
+    python scripts/train_baseline.py --model vanilla_ae --synthetic
+    python scripts/train_baseline.py --model conv_ae --synthetic --all_seeds
+    python scripts/train_baseline.py --model vanilla_ae --data_dir data/ptb-xl
+"""
+
 import argparse
 import os
 import time
@@ -6,13 +15,11 @@ import numpy as np
 import torch
 import torch.optim as optim
 
-
 from utils.dataset import load_splits, create_synthetic_data, create_dataloaders
 from utils.reproducibility import SEEDS, set_seed, get_device
 from utils.csv_logger import ResultLogger
 from evaluation.metrics import compute_metrics, aggregate_seeds
 from evaluation.plotting import plot_roc, plot_pr
-
 
 from models.vanilla_ae import VanillaAE
 from models.conv_ae import ConvAE
@@ -23,7 +30,6 @@ MODEL_REGISTRY = {
     "vanilla_ae": VanillaAE,
     "conv_ae": ConvAE,
 }
-
 
 
 def compute_anomaly_scores(model, loader, device):
@@ -48,13 +54,11 @@ def compute_anomaly_scores(model, loader, device):
         for batch_signals, batch_labels in loader:
             batch_signals = batch_signals.to(device)
             output = model(batch_signals)
-
             per_sample_mse = ((output.x_hat - batch_signals) ** 2).mean(dim=(1, 2))
             all_scores.append(per_sample_mse.cpu().numpy())
             all_labels.append(batch_labels.numpy())
 
     return np.concatenate(all_scores), np.concatenate(all_labels)
-
 
 
 def find_threshold(model, val_normal_loader, device, percentile=95):
@@ -127,7 +131,6 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
           f"size={model.model_size_mb():.2f} MB")
     print(f"{'='*60}")
 
-
     best_val_auroc = 0.0
     best_state = None
     train_start = time.time()
@@ -142,14 +145,13 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
             optimizer.zero_grad()
             output = model(batch_signals)
             loss_tuple = model.compute_loss(batch_signals, output)
-            loss = loss_tuple[0]  
+            loss = loss_tuple[0]
             loss.backward()
             optimizer.step()
             epoch_losses.append(loss.item())
 
         avg_train_loss = np.mean(epoch_losses)
         scheduler.step(avg_train_loss)
-
 
         val_scores, val_labels = compute_anomaly_scores(model, loaders["val"], device)
         val_threshold = find_threshold(model, loaders["val_normal"], device)
@@ -167,15 +169,12 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
 
     train_time = time.time() - train_start
 
-   
     model.load_state_dict(best_state)
     print(f"  Best val AUROC: {best_val_auroc:.4f} | Training time: {train_time:.1f}s")
 
-  
     os.makedirs(config.checkpoint_dir, exist_ok=True)
     ckpt_path = os.path.join(config.checkpoint_dir, f"{model_name}_seed{seed}.pt")
     torch.save(best_state, ckpt_path)
-
 
     test_scores, test_labels = compute_anomaly_scores(model, loaders["test"], device)
     test_threshold = find_threshold(model, loaders["val_normal"], device)
@@ -235,11 +234,9 @@ def main():
     if args.batch_size is not None:
         config.batch_size = args.batch_size
 
-    
     device = get_device()
     print(f"Device: {device}")
 
-   
     if args.synthetic:
         print("Using SYNTHETIC data")
         splits = create_synthetic_data(n_train=2000, n_val=500, n_test=500)
@@ -249,14 +246,13 @@ def main():
 
     loaders = create_dataloaders(splits, batch_size=config.batch_size)
 
-    
     os.makedirs(config.output_dir, exist_ok=True)
     os.makedirs(config.figure_dir, exist_ok=True)
 
     csv_path = os.path.join(config.output_dir, "centralised_baselines.csv")
     logger = ResultLogger(csv_path)
 
-    #  Training 
+    # Training
     seeds = SEEDS if args.all_seeds else [SEEDS[0]]
     results_per_seed = []
 
@@ -264,7 +260,6 @@ def main():
         result = train_one_seed(args.model, config, loaders, seed, device, logger)
         results_per_seed.append(result)
 
-  
     if len(seeds) > 1:
         agg = aggregate_seeds(results_per_seed)
         print(f"\n{'='*60}")
@@ -275,7 +270,6 @@ def main():
             std_val = agg[metric]["std"]
             print(f"  {metric.upper():15s}: {mean_val:.4f} +/- {std_val:.4f}")
 
-  
     fig_prefix = os.path.join(config.figure_dir, f"{args.model}_centralised")
     plot_roc(
         {args.model: results_per_seed[-1]},
