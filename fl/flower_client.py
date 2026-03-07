@@ -18,33 +18,15 @@ import numpy as np
 from models.base import BaseAutoencoder, AEOutput
 from utils.dataset import create_synthetic_data, create_dataloaders
 from evaluation.metrics import compute_metrics
+from fl.model_factory import get_model, DummyAE
 
-class DummyAE(BaseAutoencoder):
-    def __init__(self):
-        super().__init__()
-        self.encoder = torch.nn.Sequential(
-            torch.nn.Linear(12 * 1000, 32),
-            torch.nn.ReLU()
-        )
-        self.decoder = torch.nn.Linear(32, 12 * 1000)
 
-    def forward(self, x):
-        batch_size = x.shape[0]
-        z = self.encoder(x.view(batch_size, -1))
-        x_hat = self.decoder(z).view(batch_size, 12, 1000)
-        return AEOutput(x_hat=x_hat)
-    
-    def compute_loss(self, x, output, **kwargs):
-        loss = torch.nn.functional.mse_loss(output.x_hat, x)
-        return (loss, )
-    
 class ECGClient(fl.client.NumPyClient):
     def __init__(self, client_id: str, model_type: str = "vanilla"):
         self.client_id = client_id
 
         # Uncomment this line for using actual model once ready
-        #self.model = get_model(model_type)
-        self.model = DummyAE()
+        self.model = get_model(model_type)
 
         self.splits = create_synthetic_data(n_train=200, n_val=50, n_test=50)
         # For Sprint 2 TODO: Load Ghouse's Dirichlet shards
@@ -63,6 +45,9 @@ class ECGClient(fl.client.NumPyClient):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         
         epochs = config.get("local_epochs", 1)
+        total_loss = 0.0
+        num_batches = 0
+
         for epoch in range(epochs):
             for batch in self.loaders["train"]:
                 x = batch[0]
@@ -70,8 +55,14 @@ class ECGClient(fl.client.NumPyClient):
                 loss, *_ = self.model.compute_loss(x, self.model(x))
                 loss.backward()
                 optimizer.step()
+                total_loss += loss.item()
+                num_batches += 1
         
-        return self.get_parameters(config={}), len(self.loaders["train"].dataset), {}
+        avg_loss = total_loss / max(num_batches, 1)
+
+        return self.get_parameters(config={}), len(self.loaders["train"].dataset), {
+            "train_loss": float(avg_loss),
+        }
     
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
@@ -88,7 +79,15 @@ class ECGClient(fl.client.NumPyClient):
                 all_scores.extend(score.cpu().numpy())
                 all_labels.extend(y.cpu().numpy())
         
-        threshold = np.percentile(all_scores, 95)
-        metrics = compute_metrics(np.array(all_labels), np.array(all_scores), threshold)
+        scores_arr = np.array(all_scores)
+        labels_arr = np.array(all_labels)
+        threshold = np.percentile(scores_arr, 95)
+        
+        if len(np.unique(labels_arr)) < 2:
+            return float(np.mean(scores_arr)), len(self.loaders["val"].dataset), {
+                "val_loss": float(np.mean(scores_arr)),
+            }
+
+        metrics = compute_metrics(np.array(all_labels), scores_arr, threshold)
         
         return float(metrics.auroc), len(self.loaders["val"].dataset), metrics.to_dict()
