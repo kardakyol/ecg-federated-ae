@@ -45,10 +45,10 @@ class ConvAE(BaseAutoencoder):
 
         self._enc_temporal = seq_len
         for k, s, p in [(7, 2, 3), (7, 2, 3), (5, 2, 2), (5, 2, 2)]:
-            self._enc_temporal = math.floor((self._enc_temporal + 2*p - k) / s) 
+            self._enc_temporal = math.floor((self._enc_temporal + 2*p - k) / s) + 1
 
         # Flatten -> FC bottleneck
-        self._enc_flat_dim = 256 * 63  
+        self._enc_flat_dim = 256 * self._enc_temporal  
         self.enc_fc = nn.Linear(self._enc_flat_dim, bottleneck)
         self.enc_fc_act = nn.ReLU(inplace=False)
 
