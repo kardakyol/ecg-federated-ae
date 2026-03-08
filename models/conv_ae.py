@@ -50,8 +50,7 @@ class ConvAE(BaseAutoencoder):
         self._enc_temporal = curr_len 
         self._enc_flat_dim = 256 * self._enc_temporal
 
-        # Flatten -> FC bottleneck
-        self._enc_flat_dim = 256 * 63  
+        # Flatten -> FC bottleneck  
         self.enc_fc = nn.Linear(self._enc_flat_dim, bottleneck)
         self.enc_fc_act = nn.ReLU(inplace=False)
 
@@ -61,7 +60,7 @@ class ConvAE(BaseAutoencoder):
         self.dec_fc_act = nn.ReLU(inplace=False)
 
         # (B, 256, 63) -> (B, 128, 125)
-        self.dec_conv1 = nn.ConvTranspose1d(256, 128, kernel_size=5, stride=2, padding=2, output_padding=0)
+        self.dec_conv1 = nn.ConvTranspose1d(256, 128, kernel_size=5, stride=2, padding=2, output_padding=1)        
         self.dec_gn1 = nn.GroupNorm(num_groups=min(32, 128), num_channels=128)
         self.dec_act1 = nn.ReLU(inplace=False)
 

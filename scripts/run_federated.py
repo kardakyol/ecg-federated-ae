@@ -161,6 +161,14 @@ def evaluate_global_model(model, global_splits, device):
             normal_scores.append(mse.cpu().numpy())
 
     threshold = float(np.percentile(np.concatenate(normal_scores), 95))
+
+    normal_s = scores[labels == 0]
+    abnormal_s = scores[labels == 1]
+    print(f"\n=== SCORE DEBUG ===")
+    print(f"Normal:   mean={normal_s.mean():.6f} std={normal_s.std():.6f}")
+    print(f"Abnormal: mean={abnormal_s.mean():.6f} std={abnormal_s.std():.6f}")
+    print(f"Separation: {(abnormal_s.mean() - normal_s.mean()) / normal_s.std():.3f} std")
+    print(f"==================\n")
     return compute_metrics(labels, scores, threshold)
 
 
@@ -409,6 +417,8 @@ def main():
             print(format_aggregated(agg))
 
     print(f"\nResults saved to {csv_path}")
+
+
 
 
 if __name__ == "__main__":
