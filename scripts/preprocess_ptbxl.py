@@ -381,7 +381,7 @@ def run_pipeline(
         ("val", val_signals, val_labels),
         ("test", test_signals, test_labels),
     ]:
-        assert len(sig) == len(lbl), f"Boyut hatası: {name} sinyal={len(sig)}, etiket={len(lbl)}"
+        assert len(sig) == len(lbl), f"Dim Error: {name} signal={len(sig)}, label={len(lbl)}"
         
         np.save(output_dir / f"{name}_signals.npy", sig.astype(np.float32))
         np.save(output_dir / f"{name}_labels.npy", lbl.astype(np.int64))
