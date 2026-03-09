@@ -1,37 +1,48 @@
 """
 RAHEEB: Flower client and server configuration.
-
-Model interface (from models/base.py):
-    model.get_parameters() -> List[np.ndarray]
-    model.set_parameters(List[np.ndarray])
-    model.forward(x) -> AEOutput (with .x_hat)
-    model.compute_loss(x, output) -> (total_loss, ...)
-
-Data loading:
-    from utils.dataset import load_splits, create_dataloaders
+Optimized for Sprint 2 completion and Sprint 3 stability.
 """
-# TODO: Raheeb implementation
 
 import flwr as fl
 import torch
 import numpy as np 
+from pathlib import Path
+from torch.utils.data import Subset
 from models.base import BaseAutoencoder, AEOutput
-from utils.dataset import create_synthetic_data, create_dataloaders
+from utils.dataset import load_splits, create_dataloaders
 from evaluation.metrics import compute_metrics
 from fl.model_factory import get_model, DummyAE
 
 
 class ECGClient(fl.client.NumPyClient):
-    def __init__(self, client_id: str, model_type: str = "vanilla"):
+    def __init__(self, client_id: str, model_type: str = "vanilla", alpha: float = 0.5):
         self.client_id = client_id
+        self.device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Uncomment this line for using actual model once ready
-        self.model = get_model(model_type)
+        # Initialize model form factory
+        self.model = get_model(model_type).to(self.device)
 
-        self.splits = create_synthetic_data(n_train=200, n_val=50, n_test=50)
-        # For Sprint 2 TODO: Load Ghouse's Dirichlet shards
-        # from utils.dataset import load_splits
-        # self.splits = load_splits(f"data/ptb-xl/client_{client_id}")
+        # Data loading logic
+        data_dir = Path("data/ptb-xl")
+        all_splits = load_splits(data_dir)
+        indices_path = data_dir / "client_splits" / f"client_{client_id}_indices.npy"
+
+        if client_id == "dry-run" or not indices_path.exists():
+            print(f"[!] {client_id}: Shard not found or dry-run. Using full training set.")
+            self.splits = {
+                "train": all_splits["train"],
+                "val": all_splits["val"],
+                "test": all_splits["test"]
+            }
+        else:
+            client_indices = np.load(indices_path)
+            train_subset = Subset(all_splits["train"], client_indices)
+            train_subset.labels = all_splits["train"].labels[client_indices]
+            self.splits = {
+                "train": train_subset,
+                "val": all_splits["val"],
+                "test": all_splits["test"]
+            }
         self.loaders = create_dataloaders(self.splits, batch_size=32)
 
     def get_parameters(self, config):
@@ -42,6 +53,7 @@ class ECGClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
+        self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         
         epochs = config.get("local_epochs", 1)
@@ -50,7 +62,7 @@ class ECGClient(fl.client.NumPyClient):
 
         for epoch in range(epochs):
             for batch in self.loaders["train"]:
-                x = batch[0]
+                x = batch[0].to(self.device)
                 optimizer.zero_grad()
                 loss, *_ = self.model.compute_loss(x, self.model(x))
                 loss.backward()
@@ -72,7 +84,7 @@ class ECGClient(fl.client.NumPyClient):
 
         with torch.no_grad():
             for batch in self.loaders["val"]:
-                x = batch[0]
+                x = batch[0].to(self.device)
                 y = batch[1] if len(batch) > 1 else torch.zeros(x.shape[0])
                 output = self.model(x)
                 score = torch.mean((output.x_hat - x)**2, dim=(1,2))
@@ -88,6 +100,6 @@ class ECGClient(fl.client.NumPyClient):
                 "val_loss": float(np.mean(scores_arr)),
             }
 
-        metrics = compute_metrics(np.array(all_labels), scores_arr, threshold)
+        metrics = compute_metrics(labels_arr, scores_arr, threshold)
         
         return float(metrics.auroc), len(self.loaders["val"].dataset), metrics.to_dict()

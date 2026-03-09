@@ -181,6 +181,20 @@ All checks passed!
 ```
 
 ---
+## Sprint 2: Federated AE Updates (Raheeb)
+
+### How to test/reproduce the Federated Setup:
+Run the following commands to verify the pipeline across all models and $\alpha$ (alpha) settings:
+
+| Model | $\alpha=0.1$ | $\alpha=0.5$ | $\alpha=1.0$ |
+| :--- | :--- | :--- | :--- |
+| **Vanilla** | `python fl/flower_server.py --model vanilla --alpha 0.1 --epochs 10 --rounds 20` | `python fl/flower_server.py --model vanilla --alpha 0.5 --epochs 10 --rounds 20` | `python fl/flower_server.py --model vanilla --alpha 1.0 --epochs 10 --rounds 20` |
+| **Conv** | `python fl/flower_server.py --model conv --alpha 0.1 --epochs 10 --rounds 20` | `python fl/flower_server.py --model conv --alpha 0.5 --epochs 10 --rounds 20` | `python fl/flower_server.py --model conv --alpha 1.0 --epochs 10 --rounds 20` |
+| **VAE** | `python fl/flower_server.py --model vae --alpha 0.1 --epochs 10 --rounds 20` | `python fl/flower_server.py --model vae --alpha 0.5 --epochs 10 --rounds 20` | `python fl/flower_server.py --model vae --alpha 1.0 --epochs 10 --rounds 20` |
+
+* **Plots:** outputs/figures/ for the convergence PNGs.
+* **CSV:** outputs/convergence_results.csv for the populated metrics
+---
 
 ## Data Contract (Ghouse → Everyone)
 

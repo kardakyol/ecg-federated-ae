@@ -43,12 +43,23 @@ class ConvAE(BaseAutoencoder):
         self.enc_gn4 = nn.GroupNorm(num_groups=min(32, 256), num_channels=256)
         self.enc_act4 = nn.ReLU(inplace=False)
 
-        self._enc_temporal = seq_len
-        for k, s, p in [(7, 2, 3), (7, 2, 3), (5, 2, 2), (5, 2, 2)]:
-            self._enc_temporal = math.floor((self._enc_temporal + 2*p - k) / s) 
+        # self._enc_temporal = seq_len
+        # for k, s, p in [(7, 2, 3), (7, 2, 3), (5, 2, 2), (5, 2, 2)]:
+        #     self._enc_temporal = math.floor((self._enc_temporal + 2*p - k) / s) 
+
+        with torch.no_grad():
+            dummy_x = torch.zeros(1, n_leads, seq_len)
+            # Pass through the encoder layers to see what comes out
+            d = self.enc_act1(self.enc_gn1(self.enc_conv1(dummy_x)))
+            d = self.enc_act2(self.enc_gn2(self.enc_conv2(d)))
+            d = self.enc_act3(self.enc_gn3(self.enc_conv3(d)))
+            d = self.enc_act4(self.enc_gn4(self.enc_conv4(d)))
+
+            self._enc_flat_dim = d.numel()
+            self._enc_temporal = d.shape[-1]
 
         # Flatten -> FC bottleneck
-        self._enc_flat_dim = 256 * 63  
+        # self._enc_flat_dim = 256 * self._enc_temporal 
         self.enc_fc = nn.Linear(self._enc_flat_dim, bottleneck)
         self.enc_fc_act = nn.ReLU(inplace=False)
 
@@ -106,7 +117,7 @@ class ConvAE(BaseAutoencoder):
         if x_hat.shape[-1] != x.shape[-1]:
             x_hat = F.interpolate(x_hat, size=x.shape[-1], mode='linear', align_corners=False)
 
-        return AEOutput(x_hat=x_hat)
+        return AEOutput(x_hat=x_hat, z=z)
 
     def compute_loss(self, x: torch.Tensor, output: AEOutput, **kwargs) -> tuple:
         """MSE reconstruction loss.

@@ -1,66 +1,51 @@
 """
 RAHEEB: Flower FL server — FedAvg simulation for ECG anomaly detection.
-
-Usage:
-    python fl/flower_server.py                                    # Sprint 1 defaults
-    python fl/flower_server.py --rounds 50 --clients 10           # Sprint 2
-    python fl/flower_server.py --dry-run                          # Verify setup only
+Updated for Sprint 2 completion and Sprint 3 metric alignment.
 """
 
 import argparse
 import logging
-
+from typing import Dict, List, Tuple, Optional
 import flwr as fl
-from flwr.common import Context
+from flwr.common import Context, Metrics
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+from flwr.simulation import start_simulation
 from flwr.client import ClientApp
-
 from fl.flower_client import ECGClient
+from fl.strategies import Strategy
+from pathlib import Path
+from utils.csv_logger import ResultLogger
+import matplotlib.pyplot as plt
+from evaluation.plotting import COLORS
+import os
+import torch
+
+# Environment stabilization for Ray/Flower simulation
+os.environ["RAY_metrics_export_binaries_run_dir"] = ""
+os.environ["RAY_DEDUP_LOGS"] = "0"
 
 logger = logging.getLogger(__name__)
 
-
-# ── Module-level config (updated by argparse before simulation) ──────
+# ── Global Configs (Updated by Argparse) ───────────────────────────────────────────────────────
 _NUM_ROUNDS = 3
 _NUM_CLIENTS = 2
 _LOCAL_EPOCHS = 1
 _MODEL_TYPE = "vanilla"
+_ALPHA = 0.5
 
 
-# ── Client App ───────────────────────────────────────────────────────
-def client_fn(context: Context):
+# ── Factory to create ECGClient instances for the simulation ─────────────────────────────────────────────────────── 
+def client_fn(cid: str):
     return ECGClient(
-        client_id=str(context.node_config["partition-id"]),
+        client_id=cid,
         model_type=_MODEL_TYPE,
+        alpha=_ALPHA,
     ).to_client()
-
-
-client_app = ClientApp(client_fn=client_fn)
-
-
-# ── Server App ───────────────────────────────────────────────────────
-def server_fn(context: Context):
-    # Sprint 1: Standard FedAvg
-    # Sprint 2 TODO: Custom Strategy in fl/strategies.py
-    strategy = fl.server.strategy.FedAvg(
-        fraction_fit=1.0,
-        min_fit_clients=_NUM_CLIENTS,
-        min_available_clients=_NUM_CLIENTS,
-        on_fit_config_fn=lambda _: {
-            "local_epochs": _LOCAL_EPOCHS,
-            "model_type": _MODEL_TYPE,
-        },
-    )
-    config = ServerConfig(num_rounds=_NUM_ROUNDS)
-    return ServerAppComponents(strategy=strategy, config=config)
-
-
-server_app = ServerApp(server_fn=server_fn)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
 def main():
-    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE
+    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE, _ALPHA
 
     parser = argparse.ArgumentParser(
         description="Flower Federated Learning Simulation"
@@ -78,12 +63,16 @@ def main():
         help="Model: vanilla, conv, or vae (default: vanilla)"
     )
     parser.add_argument(
-        "--clients", type=int, default=2,
-        help="Number of virtual clients (default: 2)"
+        "--clients", type=int, default=10,
+        help="Number of virtual clients (default: 10)"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Verify setup (client creation, model, data) without running simulation"
+    )
+    parser.add_argument(
+        "--alpha", type=float, default=0.5,
+        help="Dirichlet alpha for non-IID split (default: 0.5)"
     )
     args = parser.parse_args()
 
@@ -92,6 +81,7 @@ def main():
     _NUM_CLIENTS = args.clients
     _LOCAL_EPOCHS = args.epochs
     _MODEL_TYPE = args.model
+    _ALPHA = args.alpha
 
     if args.dry_run:
         # Verify everything initialises without error
@@ -122,12 +112,85 @@ def main():
         f"model={_MODEL_TYPE}, epochs/round={_LOCAL_EPOCHS}"
     )
 
-    fl.simulation.run_simulation(
-        server_app=server_app,
-        client_app=client_app,
-        num_supernodes=_NUM_CLIENTS,
+    # Strategy configuration for Sprint 2 (30% client participation 
+    strategy = Strategy(
+        fraction_fit=0.3,
+        fraction_evaluate=0.3,
+        min_fit_clients=3,
+        min_available_clients=_NUM_CLIENTS,
+        on_fit_config_fn=lambda _: {
+            "local_epochs": _LOCAL_EPOCHS,
+            "model_type": _MODEL_TYPE,
+        },
     )
 
+    has_gpu = torch.cuda.is_available()
+    client_res = {
+        "num_cpus": 4,
+        "num_gpus": 0.5 if has_gpu else 0.0
+    }
+
+    logger.info(f"Starting FL simulation: {_NUM_ROUNDS} rounds...")
+    history = start_simulation(
+        client_fn=client_fn,
+        num_clients=_NUM_CLIENTS,
+        config=ServerConfig(num_rounds=_NUM_ROUNDS),
+        strategy=strategy,
+        client_resources=client_res,
+        ray_init_args={
+            "num_gpus": 1 if has_gpu else 0,
+            "include_dashboard": False,
+            "_temp_dir": "C:\\temp"
+        }
+    )
+
+    if history is None:
+        logger.error("Simulation returned none")
+        return
+
+    # ── Result Processing & Logging ───────────────────────────────────────────────────────
+    output_dir = Path("outputs")
+    fig_dir = output_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    dist_metrics = getattr(history, "metrics_distributed", {})
+    auroc_key = next((k for k in dist_metrics.keys() if "auroc" in k.lower()), None) 
+    
+    if auroc_key:
+        data = dist_metrics[auroc_key]
+        rounds = [item[0] for item in data]
+        aurocs = [item[1] for item in data]
+
+        fig, ax = plt.subplots(figsize=(6,4))
+        ax.plot(rounds, aurocs, color=COLORS[0], marker='o', lw=1.5, 
+                label=f"{_MODEL_TYPE}")
+        ax.set(xlabel="FL Round", ylabel="Weighted AUROC",
+               title=f"Federated Convergence")
+        ax.legend(loc="lower right")
+        ax.grid(True, alpha=0.3)
+        plot_path = fig_dir / f"convergence_{_MODEL_TYPE}_alpha{_ALPHA}.png"
+        fig.savefig(plot_path) 
+        plt.close(fig)
+        logger.info(f"Convergence plot saved to {plot_path}")
+
+        final_metrics_summary = {k: v[-1][1] for k, v in dist_metrics.items()}
+
+        logger_csv = ResultLogger(
+            output_dir / "convergence_results.csv",
+            extra_columns=["epochs", "rounds"]
+        )
+        logger_csv.log(
+            model=_MODEL_TYPE,
+            setting="federated",
+            beta=_ALPHA,
+            epochs=_LOCAL_EPOCHS,
+            rounds=_NUM_ROUNDS,
+            **final_metrics_summary
+        )
+        logger.info(f"Results logged to: {output_dir}/convergence_results.csv")
+    else:
+        logger.warning("Error: No AUROC metrics found in history")
+        
     logger.info("FL simulation complete.")
 
 
