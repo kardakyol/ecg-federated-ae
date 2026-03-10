@@ -17,12 +17,24 @@ Model interface (from models/base.py — DO NOT MODIFY):
 
 Outputs:
     outputs/quantisation_results.csv   — logged via ResultLogger
+
+Notes on measurements:
+    - FLOPs are measured on FP32 architecture only. INT8 dynamic
+      quantisation does not change the model architecture, only the
+      numerical precision of weights. Both rows share the same FLOPs.
+    - peak_memory_mb stores a process RSS delta estimate (before vs
+      after inference) measured via psutil. This is not a true
+      instantaneous hardware peak profiler. In the report, describe
+      it as: "process RSS delta during inference".
 """
 
+import gc
 import os
 import time
 import argparse
 import torch
+import psutil
+
 from utils.dataset import create_synthetic_data, create_dataloaders
 from utils.reproducibility import set_seed
 from utils.csv_logger import ResultLogger
@@ -35,10 +47,15 @@ from utils.csv_logger import ResultLogger
 def get_model_size_mb(model: torch.nn.Module) -> float:
     """
     Measure the on-disk size of a model's state dict in megabytes.
-    Uses a temporary file to get the real serialised size.
+
+    Saves the state dict to a unique temporary file, reads its size,
+    then deletes it. Using os.getpid() in the filename avoids conflicts
+    if the script is ever run in parallel.
     """
     os.makedirs("outputs", exist_ok=True)
-    tmp_path = os.path.join("outputs", "._tmp_model_size_check.pt")
+    tmp_path = os.path.join(
+        "outputs", f"._tmp_model_size_check_{os.getpid()}.pt"
+    )
     torch.save(model.state_dict(), tmp_path)
     size_mb = os.path.getsize(tmp_path) / (1024 ** 2)
     os.remove(tmp_path)
@@ -52,23 +69,23 @@ def get_model_size_mb(model: torch.nn.Module) -> float:
 def measure_inference_latency_ms(
     model: torch.nn.Module,
     x: torch.Tensor,
-    n_warmup: int = 20,
-    n_runs: int = 200,
+    n_warmup: int = 10,
+    n_runs: int = 100,
 ) -> float:
     """
     Measure mean inference latency in milliseconds.
 
-    Args:
-        model:    Any model extending BaseAutoencoder.
-        x:        A single-sample batch — shape (1, 12, 1000).
-        n_warmup: Warm-up passes before timing starts.
-        n_runs:   Number of timed forward passes.
+    Runs n_warmup passes first (results discarded) to eliminate
+    cold-start bias from CPU caching and memory paging. Then times
+    n_runs passes and returns the mean.
 
-    Returns:
-        Mean latency in milliseconds (float).
+    Both model.eval() and torch.inference_mode() are required:
+    - eval()             disables dropout and batchnorm training behaviour
+    - inference_mode()   disables gradient tracking for maximum speed
     """
     model.eval()
     x = x.cpu()
+
     with torch.inference_mode():
         for _ in range(n_warmup):
             model(x)
@@ -83,6 +100,82 @@ def measure_inference_latency_ms(
 
 
 # ---------------------------------------------------------------------------
+# FLOPs measurement
+# ---------------------------------------------------------------------------
+
+def measure_flops_m(model: torch.nn.Module, x: torch.Tensor) -> float:
+    """
+    Measure FLOPs (floating point operations) in millions using ptflops.
+
+    FLOPs are measured on the FP32 model only. Dynamic INT8 quantisation
+    changes the numerical precision of weights but does NOT change the
+    model architecture, so FP32 and INT8 share the same FLOPs count.
+
+    ptflops counts MACs (multiply-accumulate operations). Each MAC
+    equals one multiply + one add = 2 FLOPs, so we multiply by 2.
+
+    Returns 0.0 with a warning if ptflops is unavailable or fails.
+    """
+    try:
+        from ptflops import get_model_complexity_info
+
+        model.eval()
+        input_shape = tuple(x.shape[1:])  # (12, 1000) — no batch dimension
+
+        macs, _ = get_model_complexity_info(
+            model,
+            input_shape,
+            as_strings=False,
+            print_per_layer_stat=False,
+            verbose=False,
+        )
+
+        flops_m = round((macs * 2) / 1e6, 4) if macs else 0.0
+        return flops_m
+
+    except Exception as e:
+        print(
+            f"[WARNING] FLOPs measurement failed for "
+            f"{model.__class__.__name__}: {e}"
+        )
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Memory measurement
+# ---------------------------------------------------------------------------
+
+def measure_peak_memory_mb(model: torch.nn.Module, x: torch.Tensor) -> float:
+    """
+    Estimate process-level memory increase during a single forward pass.
+
+    Measures the OS-level Resident Set Size (RSS) before and after
+    inference using psutil. The delta is the memory increase caused
+    by one forward pass.
+
+    gc.collect() is called before the baseline reading to flush Python
+    garbage and reduce noise in the measurement.
+
+    IMPORTANT: This is a process RSS delta estimate, not a true
+    instantaneous hardware peak profiler. Small values or 0.0 are
+    expected for lightweight models — this is normal OS behaviour.
+    In the paper, describe as: "process RSS delta during inference".
+    """
+    model.eval()
+    x = x.cpu()
+
+    gc.collect()
+    process = psutil.Process(os.getpid())
+    baseline_mb = process.memory_info().rss / (1024 ** 2)
+
+    with torch.inference_mode():
+        _ = model(x)
+
+    after_mb = process.memory_info().rss / (1024 ** 2)
+    return round(max(after_mb - baseline_mb, 0.0), 4)
+
+
+# ---------------------------------------------------------------------------
 # Quantisation
 # ---------------------------------------------------------------------------
 
@@ -90,15 +183,15 @@ def apply_dynamic_quantisation(model: torch.nn.Module) -> torch.nn.Module:
     """
     Apply PyTorch dynamic post-training quantisation (FP32 -> INT8).
 
-    Dynamic quantisation targets Linear layers only.
-    Conv1d requires static quantisation or ONNX Runtime (Sprint 3).
-    Weights are quantised statically; activations are quantised on-the-fly.
+    Targets Linear layers only. Weights are quantised statically to
+    INT8; activations are quantised dynamically on each forward pass.
 
-    Args:
-        model: A trained BaseAutoencoder subclass (eval mode).
+    Conv1d layers are NOT quantised by this method — they require
+    static quantisation or ONNX Runtime (planned for Sprint 3).
 
-    Returns:
-        Quantised model (CPU-only, torch.qint8).
+    Note: torch.quantization.quantize_dynamic is deprecated in PyTorch
+    2.10+. It remains functional for now but will need migration to
+    torchao in a future sprint.
     """
     model.eval()
     quantised = torch.quantization.quantize_dynamic(
@@ -115,8 +208,8 @@ def apply_dynamic_quantisation(model: torch.nn.Module) -> torch.nn.Module:
 
 def _make_temp_ae() -> torch.nn.Module:
     """
-    Temporary placeholder model used when the real model is not yet implemented.
-    Remove once Shardul and Kaan finish their implementations.
+    Temporary placeholder autoencoder used when the real model is
+    not yet available. Remove once Shardul and Kaan push their models.
     """
     import torch.nn as nn
     import torch.nn.functional as F
@@ -142,44 +235,39 @@ def _make_temp_ae() -> torch.nn.Module:
 
 def load_model(model_name: str) -> torch.nn.Module:
     """
-    Load a model by name.  Only imports from the shared models/ directory.
-    Falls back to a temporary placeholder if the real model is not yet implemented.
+    Load a model by name from the shared models/ directory.
+    Falls back to _TempAE if the real model is not yet implemented.
 
     Args:
         model_name: One of 'vanilla_ae', 'conv_ae', 'vae'.
 
     Returns:
-        Instantiated model in eval mode.
+        Instantiated model ready for eval mode.
     """
-    if model_name == "vanilla_ae":
-        try:
-            from models.vanilla_ae import VanillaAE
-            return VanillaAE()
-        except (ImportError, AttributeError):
-            print(f"[WARNING] VanillaAE not implemented yet — using TempAE placeholder.")
-            return _make_temp_ae()
+    _MODELS = {
+        "vanilla_ae": ("models.vanilla_ae", "VanillaAE"),
+        "conv_ae":    ("models.conv_ae",    "ConvAE"),
+        "vae":        ("models.vae",        "VAE"),
+    }
 
-    elif model_name == "conv_ae":
-        try:
-            from models.conv_ae import ConvAE
-            return ConvAE()
-        except (ImportError, AttributeError):
-            print(f"[WARNING] ConvAE not implemented yet — using TempAE placeholder.")
-            return _make_temp_ae()
-
-    elif model_name == "vae":
-        try:
-            from models.vae import VAE
-            return VAE()
-        except (ImportError, AttributeError):
-            print(f"[WARNING] VAE not implemented yet — using TempAE placeholder.")
-            return _make_temp_ae()
-
-    else:
+    if model_name not in _MODELS:
         raise ValueError(
             f"Unknown model '{model_name}'. "
             "Choose from: vanilla_ae, conv_ae, vae"
         )
+
+    module_path, class_name = _MODELS[model_name]
+    try:
+        import importlib
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls()
+    except (ImportError, AttributeError):
+        print(
+            f"[WARNING] {class_name} not implemented yet "
+            "— using TempAE placeholder."
+        )
+        return _make_temp_ae()
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +283,16 @@ def run_ptq_single(
     Run the full PTQ pipeline for one model and one seed.
 
     Steps:
-        1. Load model.
-        2. Measure FP32 size and latency.
-        3. Apply dynamic quantisation.
-        4. Measure INT8 size and latency.
-        5. Log both results via ResultLogger.
+        1. Create a synthetic single-sample batch.
+        2. Load FP32 model and measure: size, latency, FLOPs, RSS delta.
+        3. Apply dynamic INT8 quantisation.
+        4. Measure INT8: size, latency, RSS delta.
+           (INT8 FLOPs = FP32 FLOPs — architecture unchanged.)
+        5. Sanity check: INT8 output x_hat shape must match input.
+        6. Log FP32 and INT8 rows to CSV via ResultLogger.
+
+    If the model fails at any step, a warning is printed and the
+    pipeline moves on to the next model without crashing.
 
     Args:
         model_name: 'vanilla_ae', 'conv_ae', or 'vae'.
@@ -208,74 +301,117 @@ def run_ptq_single(
     """
     set_seed(seed)
 
-    # --- build a single-sample synthetic batch (no real data needed) ---
+    # single-sample batch — shape (1, 12, 1000)
     splits = create_synthetic_data(n_train=64, n_val=32, n_test=32)
     loaders = create_dataloaders(splits, batch_size=1)
-    x_sample, _ = next(iter(loaders["test"]))   # shape: (1, 12, 1000)
+    x_sample, _ = next(iter(loaders["test"]))
     x_sample = x_sample.cpu()
 
-    # --- FP32 baseline ---
-    model_fp32 = load_model(model_name).cpu()
-    model_fp32.eval()
+    try:
+        # ----------------------------------------------------------------
+        # FP32 baseline
+        # ----------------------------------------------------------------
+        model_fp32 = load_model(model_name).cpu()
+        model_fp32.eval()
 
-    fp32_size_mb   = get_model_size_mb(model_fp32)
-    fp32_latency   = measure_inference_latency_ms(model_fp32, x_sample)
-    fp32_params    = model_fp32.count_parameters()
+        fp32_size_mb  = get_model_size_mb(model_fp32)
+        fp32_latency  = measure_inference_latency_ms(model_fp32, x_sample)
+        fp32_flops_m  = measure_flops_m(model_fp32, x_sample)
+        fp32_peak_mem = measure_peak_memory_mb(model_fp32, x_sample)
+        fp32_params   = model_fp32.count_parameters()
 
-    # --- INT8 quantised ---
-    model_int8     = apply_dynamic_quantisation(model_fp32)
-    int8_size_mb   = get_model_size_mb(model_int8)
-    int8_latency   = measure_inference_latency_ms(model_int8, x_sample)
+        # ----------------------------------------------------------------
+        # INT8 quantised
+        # ----------------------------------------------------------------
+        model_int8 = apply_dynamic_quantisation(model_fp32)
 
-    # --- sanity check: INT8 output must have x_hat with correct shape ---
-    with torch.inference_mode():
-        out = model_int8(x_sample)
-        assert hasattr(out, "x_hat"), "INT8 model output missing x_hat"
-        assert out.x_hat.shape == x_sample.shape, (
-            f"Shape mismatch: got {out.x_hat.shape}, expected {x_sample.shape}"
+        int8_size_mb  = get_model_size_mb(model_int8)
+        int8_latency  = measure_inference_latency_ms(model_int8, x_sample)
+        int8_flops_m  = fp32_flops_m   # same architecture — FLOPs unchanged
+        int8_peak_mem = measure_peak_memory_mb(model_int8, x_sample)
+
+        # ----------------------------------------------------------------
+        # Sanity check
+        # ----------------------------------------------------------------
+        with torch.inference_mode():
+            out = model_int8(x_sample)
+            assert hasattr(out, "x_hat"), \
+                "INT8 model output is missing x_hat attribute"
+            assert out.x_hat.shape == x_sample.shape, (
+                f"Shape mismatch: got {out.x_hat.shape}, "
+                f"expected {x_sample.shape}"
+            )
+
+        # ----------------------------------------------------------------
+        # Derived metrics
+        # ----------------------------------------------------------------
+        size_reduction_pct = round(
+            (1 - int8_size_mb / fp32_size_mb) * 100, 2
+        )
+        speedup_ratio = (
+            round(fp32_latency / int8_latency, 3)
+            if int8_latency > 0 else None
         )
 
-    # --- derived metrics ---
-    size_reduction_pct    = round((1 - int8_size_mb / fp32_size_mb) * 100, 2)
-    speedup_ratio         = round(fp32_latency / int8_latency, 3) if int8_latency > 0 else None
+        # ----------------------------------------------------------------
+        # Console summary
+        # ----------------------------------------------------------------
+        print(f"\n{'=' * 68}")
+        print(f"  Model : {model_name}   |   Seed : {seed}")
+        print(f"{'=' * 68}")
+        print(
+            f"  {'':12s}  {'Size (MB)':>10}  {'Latency (ms)':>13}"
+            f"  {'FLOPs (M)':>10}  {'RSS δ (MB)':>10}"
+        )
+        print(
+            f"  {'FP32':12s}  {fp32_size_mb:>10.4f}  {fp32_latency:>13.4f}"
+            f"  {fp32_flops_m:>10.4f}  {fp32_peak_mem:>10.4f}"
+        )
+        print(
+            f"  {'INT8':12s}  {int8_size_mb:>10.4f}  {int8_latency:>13.4f}"
+            f"  {int8_flops_m:>10.4f}  {int8_peak_mem:>10.4f}"
+        )
+        print(
+            f"  {'Reduction':12s}  {size_reduction_pct:>9.1f}%"
+            f"    speedup x{speedup_ratio}"
+        )
+        print(f"  Parameters : {fp32_params:,}")
+        print(f"{'=' * 68}\n")
 
-    # --- console summary ---
-    print(f"\n{'=' * 52}")
-    print(f"  Model : {model_name}   |   Seed : {seed}")
-    print(f"{'=' * 52}")
-    print(f"  {'':12s}  {'Size (MB)':>10}  {'Latency (ms)':>14}")
-    print(f"  {'FP32':12s}  {fp32_size_mb:>10.4f}  {fp32_latency:>14.4f}")
-    print(f"  {'INT8':12s}  {int8_size_mb:>10.4f}  {int8_latency:>14.4f}")
-    print(f"  {'Reduction':12s}  {size_reduction_pct:>9.1f}%  "
-          f"  speedup x{speedup_ratio}")
-    print(f"  Parameters : {fp32_params:,}")
-    print(f"{'=' * 52}\n")
+        # ----------------------------------------------------------------
+        # Log to CSV
+        # peak_memory_mb stores process RSS delta estimate — see docstring
+        # ----------------------------------------------------------------
+        logger.log(
+            model=model_name,
+            setting="centralised",
+            precision_type="fp32",
+            seed=seed,
+            model_size_mb=fp32_size_mb,
+            inference_latency_ms=fp32_latency,
+            flops_m=fp32_flops_m,
+            peak_memory_mb=fp32_peak_mem,   # RSS delta estimate
+            auroc=None, auprc=None, sensitivity=None,
+            specificity=None, precision_score=None,
+            f1=None, epsilon=None, training_time_s=None,
+        )
 
-    # --- log FP32 row ---
-    logger.log(
-        model=model_name,
-        setting="centralised",
-        precision_type="fp32",
-        seed=seed,
-        model_size_mb=fp32_size_mb,
-        inference_latency_ms=fp32_latency,
-        auroc=None, auprc=None, sensitivity=None,
-        specificity=None, precision_score=None,
-        f1=None, epsilon=None, training_time_s=None,
-    )
+        logger.log(
+            model=model_name,
+            setting="centralised",
+            precision_type="int8",
+            seed=seed,
+            model_size_mb=int8_size_mb,
+            inference_latency_ms=int8_latency,
+            flops_m=int8_flops_m,
+            peak_memory_mb=int8_peak_mem,   # RSS delta estimate
+            auroc=None, auprc=None, sensitivity=None,
+            specificity=None, precision_score=None,
+            f1=None, epsilon=None, training_time_s=None,
+        )
 
-    # --- log INT8 row ---
-    logger.log(
-        model=model_name,
-        setting="centralised",
-        precision_type="int8",
-        seed=seed,
-        model_size_mb=int8_size_mb,
-        inference_latency_ms=int8_latency,
-        auroc=None, auprc=None, sensitivity=None,
-        specificity=None, precision_score=None,
-        f1=None, epsilon=None, training_time_s=None,
-    )
+    except Exception as e:
+        print(f"[WARNING] {model_name} failed with error: {e} — skipping.")
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +433,7 @@ def main() -> None:
         "--seed",
         type=int,
         default=42,
-        help="Random seed (default: 42). Use SEEDS=[42,123,456] for full runs.",
+        help="Random seed (default: 42). Use 42, 123, 456 for full runs.",
     )
     parser.add_argument(
         "--output",
