@@ -131,8 +131,9 @@ def main():
         return
 
     labels = np.load(labels_path)
-    log.info("Loaded %d training labels (%d normal, %d abnormal)",
-             len(labels), (labels == 0).sum(), (labels == 1).sum())
+    if (labels == 1).any():
+        normal_idx = np.where(labels == 0)[0]
+        labels = labels[normal_idx]
 
     # ---- Partition ----
     client_indices = dirichlet_partition(labels, args.num_clients, args.alpha, args.seed)
