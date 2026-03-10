@@ -6,12 +6,13 @@ Optimized for Sprint 2 completion and Sprint 3 stability.
 import flwr as fl
 import torch
 import numpy as np 
+import time
 from pathlib import Path
 from torch.utils.data import Subset
 from models.base import BaseAutoencoder, AEOutput
 from utils.dataset import load_splits, create_dataloaders
 from evaluation.metrics import compute_metrics
-from fl.model_factory import get_model, DummyAE
+from fl.model_factory import get_model
 
 
 class ECGClient(fl.client.NumPyClient):
@@ -44,6 +45,7 @@ class ECGClient(fl.client.NumPyClient):
                 "test": all_splits["test"]
             }
         self.loaders = create_dataloaders(self.splits, batch_size=32)
+        self.last_train_time = 0.0
 
     def get_parameters(self, config):
         return self.model.get_parameters()
@@ -52,6 +54,8 @@ class ECGClient(fl.client.NumPyClient):
         self.model.set_parameters(parameters) 
 
     def fit(self, parameters, config):
+        # Standard Federated Training
+        start_time = time.time()
         self.set_parameters(parameters)
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
@@ -70,17 +74,34 @@ class ECGClient(fl.client.NumPyClient):
                 total_loss += loss.item()
                 num_batches += 1
         
+        self.last_train_time = time.time() - start_time
         avg_loss = total_loss / max(num_batches, 1)
 
         return self.get_parameters(config={}), len(self.loaders["train"].dataset), {
             "train_loss": float(avg_loss),
+            "train_time": self.last_train_time
         }
     
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
+
+        # Post Global fine tuning
+        self.model.train()
+        ft_optimizer=torch.optim.Adam(self.model.parameters(), lr=0.0001)
+        fine_tune_epochs = 5
+
+        for _ in range(fine_tune_epochs):
+            for batch in self.loaders["train"]:
+                x = batch[0].to(self.device)
+                ft_optimizer.zero_grad()
+                loss, *_ = self.model.compute_loss(x, self.model(x))
+                loss.backward()
+                ft_optimizer.step()
+        
         self.model.eval()
         all_scores = []
         all_labels = []
+        start_inf = time.time()
 
         with torch.no_grad():
             for batch in self.loaders["val"]:
@@ -91,6 +112,9 @@ class ECGClient(fl.client.NumPyClient):
                 all_scores.extend(score.cpu().numpy())
                 all_labels.extend(y.cpu().numpy())
         
+        total_inf_time = (time.time() - start_inf) * 1000
+        avg_latency = total_inf_time / len(self.loaders["val"].dataset)
+
         scores_arr = np.array(all_scores)
         labels_arr = np.array(all_labels)
         threshold = np.percentile(scores_arr, 95)
@@ -101,5 +125,18 @@ class ECGClient(fl.client.NumPyClient):
             }
 
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
+        result_dict = metrics.to_dict()
+        result_dict.update({
+            "training_time_s": self.last_train_time,
+            "inference_latency_ms": avg_latency,
+            "model_size_mb": self.model.model_size_mb(),
+            "precision_score": result_dict.get("precision", 0.0),
+            "flops_m": 0.0,
+            "epsilon": "N/A"
+        })
+
+        # record memory usage for DP efficiency analysis
+        if torch.cuda.is_available():
+            result_dict["peak_memory_mb"] = torch.cuda.max_memory_allocated() / (1024**2)
         
-        return float(metrics.auroc), len(self.loaders["val"].dataset), metrics.to_dict()
+        return float(metrics.auroc), len(self.loaders["val"].dataset), result_dict

@@ -172,12 +172,17 @@ def main():
         fig.savefig(plot_path) 
         plt.close(fig)
         logger.info(f"Convergence plot saved to {plot_path}")
-
+    
+    if dist_metrics:
         final_metrics_summary = {k: v[-1][1] for k, v in dist_metrics.items()}
 
         logger_csv = ResultLogger(
             output_dir / "convergence_results.csv",
-            extra_columns=["epochs", "rounds"]
+            extra_columns=[
+                "epochs", "rounds", "auprc", "f1", "sensitivity", "specificity",
+                "precision_score", "f1", "model_size_mb", "flops_m", 
+                "inference_latency_ms", "peak_memory_mb", "training_time_s"
+            ]
         )
         logger_csv.log(
             model=_MODEL_TYPE,
@@ -188,8 +193,6 @@ def main():
             **final_metrics_summary
         )
         logger.info(f"Results logged to: {output_dir}/convergence_results.csv")
-    else:
-        logger.warning("Error: No AUROC metrics found in history")
         
     logger.info("FL simulation complete.")
 
