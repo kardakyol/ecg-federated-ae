@@ -1,0 +1,205 @@
+import argparse
+import os
+import time
+import logging
+
+import numpy as np
+import torch
+import torch.optim as optim
+
+from utils.dataset import load_splits, create_synthetic_data, create_dataloaders
+from utils.reproducibility import SEEDS, set_seed, get_device, setup_logging
+from utils.csv_logger import ResultLogger
+from evaluation.metrics import compute_metrics, aggregate_seeds, format_aggregated
+
+from models.vanilla_ae import VanillaAE
+from models.conv_ae import ConvAE
+
+
+logger = logging.getLogger(__name__)
+
+MODEL_REGISTRY = {
+    "vanilla_ae": VanillaAE,
+    "conv_ae": ConvAE,
+}
+
+BOTTLENECK_SIZES = [16, 32, 64, 128]
+
+
+
+def compute_anomaly_scores(model, loader, device):
+    """Per-sample MSE reconstruction error as anomaly score."""
+    model.eval()
+    all_scores = []
+    all_labels = []
+    with torch.no_grad():
+        for signals, labels in loader:
+            signals = signals.to(device)
+            output = model(signals)
+            per_sample_mse = ((output.x_hat - signals) ** 2).mean(dim=(1, 2))
+            all_scores.append(per_sample_mse.cpu().numpy())
+            all_labels.append(labels.numpy())
+    return np.concatenate(all_scores), np.concatenate(all_labels)
+
+
+def find_threshold(model, val_normal_loader, device, percentile=95):
+    """Threshold from normal validation reconstruction errors."""
+    model.eval()
+    scores = []
+    with torch.no_grad():
+        for signals, labels in val_normal_loader:
+            signals = signals.to(device)
+            output = model(signals)
+            mse = ((output.x_hat - signals) ** 2).mean(dim=(1, 2))
+            scores.append(mse.cpu().numpy())
+    return float(np.percentile(np.concatenate(scores), percentile))
+
+
+
+
+def train_single(model_name, bottleneck, loaders, seed, device,
+                 epochs=50, lr=1e-3, weight_decay=1e-5):
+    """Train one model config, return MetricsResult."""
+    set_seed(seed)
+
+    model = MODEL_REGISTRY[model_name](bottleneck=bottleneck).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
+
+    n_params = model.count_parameters()
+    size_mb = model.model_size_mb()
+    logger.info(f"  {model_name} | bottleneck={bottleneck} | seed={seed} | "
+                f"params={n_params:,} | size={size_mb:.2f} MB")
+
+    best_val_auroc = 0.0
+    best_state = None
+    train_start = time.time()
+
+    for epoch in range(epochs):
+        model.train()
+        epoch_losses = []
+        for signals, labels in loaders["train"]:
+            signals = signals.to(device)
+            optimizer.zero_grad()
+            output = model(signals)
+            loss = model.compute_loss(signals, output)[0]
+            loss.backward()
+            optimizer.step()
+            epoch_losses.append(loss.item())
+
+        avg_loss = np.mean(epoch_losses)
+        scheduler.step(avg_loss)
+
+    
+        val_scores, val_labels = compute_anomaly_scores(model, loaders["val"], device)
+        val_threshold = find_threshold(model, loaders["val_normal"], device)
+        val_result = compute_metrics(val_labels, val_scores, val_threshold)
+
+        if val_result.auroc > best_val_auroc:
+            best_val_auroc = val_result.auroc
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+
+        if (epoch + 1) % 10 == 0:
+            logger.info(f"    Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} | "
+                        f"Val AUROC: {val_result.auroc:.4f}")
+
+    train_time = time.time() - train_start
+    model.load_state_dict(best_state)
+
+    
+    test_scores, test_labels = compute_anomaly_scores(model, loaders["test"], device)
+    test_threshold = find_threshold(model, loaders["val_normal"], device)
+    test_result = compute_metrics(test_labels, test_scores, test_threshold)
+
+    logger.info(f"    -> Test {test_result} | time={train_time:.1f}s")
+
+    return test_result, size_mb, train_time
+
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Bottleneck Ablation")
+    parser.add_argument("--data_dir", type=str, default="data/ptb-xl")
+    parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--model", type=str, default=None,
+                        choices=["vanilla_ae", "conv_ae"],
+                        help="Run one model only (default: both)")
+    parser.add_argument("--bottlenecks", type=int, nargs="+", default=None,
+                        help="Override bottleneck sizes (default: 16 32 64 128)")
+    parser.add_argument("--seeds", type=int, nargs="+", default=None,
+                        help="Override seeds (default: 42 123 456)")
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    args = parser.parse_args()
+
+    setup_logging()
+
+    device = get_device()
+    logger.info(f"Device: {device}")
+
+    
+    if args.synthetic:
+        logger.info("Using SYNTHETIC data")
+        splits = create_synthetic_data(n_train=2000, n_val=500, n_test=500)
+    else:
+        logger.info(f"Loading data from {args.data_dir}")
+        splits = load_splits(args.data_dir)
+
+    loaders = create_dataloaders(splits, batch_size=args.batch_size)
+
+ 
+    models_to_run = [args.model] if args.model else ["vanilla_ae", "conv_ae"]
+    bottlenecks = args.bottlenecks or BOTTLENECK_SIZES
+    seeds = args.seeds or SEEDS
+
+
+    os.makedirs("outputs", exist_ok=True)
+    csv_logger = ResultLogger("outputs/ablation_bottleneck.csv",
+                              extra_columns=["bottleneck"])
+
+    logger.info(f"Models: {models_to_run}")
+    logger.info(f"Bottlenecks: {bottlenecks}")
+    logger.info(f"Seeds: {seeds}")
+    logger.info(f"Total runs: {len(models_to_run) * len(bottlenecks) * len(seeds)}")
+
+    
+    for model_name in models_to_run:
+        for bn in bottlenecks:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"{model_name} | bottleneck={bn}")
+            logger.info(f"{'='*60}")
+
+            results_per_seed = []
+
+            for seed in seeds:
+                result, size_mb, train_time = train_single(
+                    model_name, bn, loaders, seed, device,
+                    epochs=args.epochs, lr=args.lr,
+                )
+                results_per_seed.append(result)
+
+                csv_logger.log(
+                    model=model_name,
+                    bottleneck=bn,
+                    seed=seed,
+                    auroc=result.auroc,
+                    auprc=result.auprc,
+                    sensitivity=result.sensitivity,
+                    specificity=result.specificity,
+                    precision_score=result.precision,
+                    f1=result.f1,
+                    model_size_mb=size_mb,
+                    training_time_s=train_time,
+                )
+
+            
+            agg = aggregate_seeds(results_per_seed)
+            logger.info(f"\n  Aggregated ({len(seeds)} seeds):")
+            logger.info(format_aggregated(agg))
+
+    logger.info(f"\nResults saved to outputs/ablation_bottleneck.csv")
+
+
+if __name__ == "__main__":
+    main()
