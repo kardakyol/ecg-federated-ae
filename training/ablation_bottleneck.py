@@ -124,7 +124,7 @@ def main():
     parser.add_argument("--data_dir", type=str, default="data/ptb-xl")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=str, default=None,
-                        choices=["vanilla_ae", "conv_ae"],
+                        choices=["vanilla_ae", "conv_ae", "vae"],
                         help="Run one model only (default: both)")
     parser.add_argument("--bottlenecks", type=int, nargs="+", default=None,
                         help="Override bottleneck sizes (default: 16 32 64 128)")

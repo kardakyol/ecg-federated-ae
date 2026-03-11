@@ -1,0 +1,78 @@
+Data directory: data/ptb-xl
+Exists: True
+Total files: 22
+.npy files: 19
+  client_splits/client_0_indices.npy  (0.0 MB)
+  client_splits/client_1_indices.npy  (0.0 MB)
+  client_splits/client_2_indices.npy  (0.0 MB)
+  client_splits/client_3_indices.npy  (0.0 MB)
+  client_splits/client_4_indices.npy  (0.0 MB)
+  client_splits/client_5_indices.npy  (0.0 MB)
+  client_splits/client_6_indices.npy  (0.0 MB)
+  client_splits/client_7_indices.npy  (0.0 MB)
+  client_splits/client_8_indices.npy  (0.0 MB)
+  client_splits/client_9_indices.npy  (0.0 MB)
+  test_labels.npy  (0.0 MB)
+  test_signals.npy  (140.2 MB)
+  test_subclass_labels.npy  (0.0 MB)
+  train_labels.npy  (0.0 MB)
+  train_signals.npy  (288.1 MB)
+  train_subclass_labels.npy  (0.1 MB)
+  val_labels.npy  (0.0 MB)
+  val_signals.npy  (140.9 MB)
+  val_subclass_labels.npy  (0.0 MB)
+Found pattern 0: ['train_signals.npy', 'train_labels.npy', 'val_signals.npy', 'val_labels.npy', 'test_signals.npy', 'test_labels.npy']
+  train_X   : shape=(6294, 12, 1000)      dtype=float32
+  train_y   : shape=(6294,)               dtype=int64
+  val_X     : shape=(3078, 12, 1000)      dtype=float32
+  val_y     : shape=(3078,)               dtype=int64
+  test_X    : shape=(3062, 12, 1000)      dtype=float32
+  test_y    : shape=(3062,)               dtype=int64
+
+  Channels-first (B, 12, T): True
+  Channels-last  (B, T, 12): False
+  Global min:  0.000000
+  Global max:  1.000000
+  Global mean: 0.524188
+  Global std:  0.106718
+
+  Per-lead statistics:
+    Lead  0: mean=+0.4410  std=0.0253  min=0.0000  max=1.0000
+    Lead  1: mean=+0.4055  std=0.0308  min=0.0000  max=1.0000
+    Lead  2: mean=+0.4613  std=0.0211  min=0.0000  max=1.0000
+    Lead  3: mean=+0.5713  std=0.0316  min=0.0000  max=1.0000
+    Lead  4: mean=+0.4697  std=0.0194  min=0.0000  max=1.0000
+    Lead  5: mean=+0.4215  std=0.0258  min=0.0000  max=1.0000
+    Lead  6: mean=+0.7257  std=0.0087  min=0.0000  max=1.0000
+    Lead  7: mean=+0.4417  std=0.0164  min=0.0000  max=1.0000
+    Lead  8: mean=+0.6634  std=0.0148  min=0.0000  max=1.0000
+    Lead  9: mean=+0.6598  std=0.0183  min=0.0000  max=1.0000
+    Lead 10: mean=+0.5668  std=0.0102  min=0.0000  max=1.0000
+    Lead 11: mean=+0.4625  std=0.0107  min=0.0000  max=1.0000
+
+  ISSUE CHECKS:
+  ⚠️  DATA MAY NOT BE Z-SCORE NORMALIZED
+     Expected: mean≈0, std≈1
+     Got: mean=0.5242, std=0.1067
+  ⚠️  VALUES IN [0,1] — possibly min-max scaled or clipped
+     This kills anomaly detection — MSE differences become tiny
+  ✓ dtype is float32
+  ✓ No NaN/Inf values
+  train: total=6294
+    label=0: 6294 (100.0%)
+  val  : total=3078
+    label=0: 1337 (43.4%)
+    label=1: 1741 (56.6%)
+  test : total=3062
+    label=0: 1407 (46.0%)
+    label=1: 1655 (54.0%)
+  ⚠️  Labels have 1 unique values — expected binary (0/1)
+     Unique values: [0]
+  ✓ No overlap detected (checked 100 test samples)
+  Cannot compute — need both normal and abnormal samples in train
+Review all ⚠️ warnings above. Common fixes:
+  1. If not z-score normalized → fix preprocessing
+  2. If channels-last → transpose to channels-first
+  3. If dtype is int → cast to float32
+  4. If very low SNR → bottleneck must be tight (8-16)
+  5. If label distribution is wrong → check label extraction
