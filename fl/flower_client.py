@@ -79,7 +79,7 @@ class ECGClient(fl.client.NumPyClient):
 
         return self.get_parameters(config={}), len(self.loaders["train"].dataset), {
             "train_loss": float(avg_loss),
-            "train_time": self.last_train_time
+            "training_time_s": float(self.last_train_time)
         }
     
     def evaluate(self, parameters, config):
@@ -126,11 +126,13 @@ class ECGClient(fl.client.NumPyClient):
 
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
         result_dict = metrics.to_dict()
+        p_val = result_dict.pop("precision", 0.0)
         result_dict.update({
-            "training_time_s": self.last_train_time,
-            "inference_latency_ms": avg_latency,
-            "model_size_mb": self.model.model_size_mb(),
-            "precision_score": result_dict.get("precision", 0.0),
+            "training_time_s": float(self.last_train_time),
+            "inference_latency_ms": float(avg_latency),
+            "model_size_mb": float(self.model.model_size_mb()),
+            "precision_score": float(p_val),
+            "precision_type": "fp32",
             "flops_m": 0.0,
             "epsilon": "N/A"
         })

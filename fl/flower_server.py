@@ -154,6 +154,7 @@ def main():
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     dist_metrics = getattr(history, "metrics_distributed", {})
+    fit_metrics = getattr(history, "metrics_distributed_fit", {})
     auroc_key = next((k for k in dist_metrics.keys() if "auroc" in k.lower()), None) 
     
     if auroc_key:
@@ -174,15 +175,16 @@ def main():
         logger.info(f"Convergence plot saved to {plot_path}")
     
     if dist_metrics:
+        logger.debug(f"DEBUG: fit_metrics keys: {fit_metrics.keys()}")
         final_metrics_summary = {k: v[-1][1] for k, v in dist_metrics.items()}
 
+        if "training_time_s" in fit_metrics:
+            final_metrics_summary["training_time_s"] = fit_metrics["training_time_s"][-1][1]
+
+        #final_metrics_summary["precision_type"] = "int8"
         logger_csv = ResultLogger(
             output_dir / "convergence_results.csv",
-            extra_columns=[
-                "epochs", "rounds", "auprc", "f1", "sensitivity", "specificity",
-                "precision_score", "f1", "model_size_mb", "flops_m", 
-                "inference_latency_ms", "peak_memory_mb", "training_time_s"
-            ]
+            extra_columns=["epochs", "rounds"]
         )
         logger_csv.log(
             model=_MODEL_TYPE,

@@ -19,12 +19,12 @@ def weighted_average(metrics: List[tuple[int, Metrics]]) -> Metrics:
 
     for key in all_keys:
         # Check if the value is numeric before trying to average it
-        try:
+        val = metrics[0][1][key]
+        if isinstance(val, (int, float)):
             weighted_sum = sum(num_examples * m[key] for num_examples, m in metrics if key in m)
             aggregated_metrics[key] = weighted_sum / total_examples
-        except (TypeError, KeyError):
-            # Skip non-numeric metrics (like strings or version info)
-            continue
+        else:
+            aggregated_metrics[key] = val
 
     return aggregated_metrics
 
@@ -40,5 +40,6 @@ class Strategy(fl.server.strategy.FedAvg):
             min_fit_clients=min_fit_clients,
             min_available_clients=min_available_clients,
             evaluate_metrics_aggregation_fn=weighted_average,
+            fit_metrics_aggregation_fn=weighted_average,
             on_fit_config_fn=on_fit_config_fn,
         )
