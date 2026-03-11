@@ -28,14 +28,19 @@ logger = logging.getLogger(__name__)
 
 # ── Global Configs (Updated by Argparse) ───────────────────────────────────────────────────────
 _NUM_ROUNDS = 3
-_NUM_CLIENTS = 2
+_NUM_CLIENTS = 10
 _LOCAL_EPOCHS = 1
 _MODEL_TYPE = "vanilla"
-_ALPHA = 0.5
+_ALPHA = 1.0
+_BETA = 0.5
 
 
 # ── Factory to create ECGClient instances for the simulation ─────────────────────────────────────────────────────── 
 def client_fn(cid: str):
+    """
+    Creates a client instance. Note: Alpha is used for data splitting 
+    logic during client initialization. 
+    """
     return ECGClient(
         client_id=cid,
         model_type=_MODEL_TYPE,
@@ -45,7 +50,7 @@ def client_fn(cid: str):
 
 # ── CLI ──────────────────────────────────────────────────────────────
 def main():
-    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE, _ALPHA
+    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE, _ALPHA, _BETA
 
     parser = argparse.ArgumentParser(
         description="Flower Federated Learning Simulation"
@@ -74,6 +79,10 @@ def main():
         "--alpha", type=float, default=0.5,
         help="Dirichlet alpha for non-IID split (default: 0.5)"
     )
+    parser.add_argument(
+        "--beta", type=float, default=0.5,
+        help="Beta for VAE loss (default: 0.5, ignored for non-VAE)"
+    )
     args = parser.parse_args()
 
     # Update module-level config
@@ -82,6 +91,7 @@ def main():
     _LOCAL_EPOCHS = args.epochs
     _MODEL_TYPE = args.model
     _ALPHA = args.alpha
+    _BETA = args.beta
 
     if args.dry_run:
         # Verify everything initialises without error
@@ -121,6 +131,8 @@ def main():
         on_fit_config_fn=lambda _: {
             "local_epochs": _LOCAL_EPOCHS,
             "model_type": _MODEL_TYPE,
+			"beta": _BETA,
+			"alpha": _ALPHA,
         },
     )
 
@@ -184,12 +196,13 @@ def main():
         #final_metrics_summary["precision_type"] = "int8"
         logger_csv = ResultLogger(
             output_dir / "convergence_results.csv",
-            extra_columns=["epochs", "rounds"]
+            extra_columns=["epochs", "rounds", "alpha", "beta"]
         )
         logger_csv.log(
             model=_MODEL_TYPE,
             setting="federated",
-            beta=_ALPHA,
+            alpha=_ALPHA,
+			beta=_BETA,
             epochs=_LOCAL_EPOCHS,
             rounds=_NUM_ROUNDS,
             **final_metrics_summary
