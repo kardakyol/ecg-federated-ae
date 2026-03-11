@@ -14,6 +14,7 @@ from evaluation.metrics import compute_metrics, aggregate_seeds, format_aggregat
 
 from models.vanilla_ae import VanillaAE
 from models.conv_ae import ConvAE
+from models.vae import VAE
 
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 MODEL_REGISTRY = {
     "vanilla_ae": VanillaAE,
     "conv_ae": ConvAE,
+    "vae": VAE
 }
 
 BOTTLENECK_SIZES = [16, 32, 64, 128]
