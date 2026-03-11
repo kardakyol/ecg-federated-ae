@@ -110,6 +110,7 @@ def main():
         # Quick single-batch forward pass
         batch = next(iter(test_client.loaders["train"]))
         x = batch[0]
+        x = x.to(test_client.device)
         output = test_client.model(x)
         loss, *_ = test_client.model.compute_loss(x, output)
         print(f"[dry-run] Forward OK : input={tuple(x.shape)} -> output={tuple(output.x_hat.shape)}")
