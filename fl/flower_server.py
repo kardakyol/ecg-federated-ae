@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from evaluation.plotting import COLORS
 import os
 import torch
+import time
 
 # Environment stabilization for Ray/Flower simulation
 os.environ["RAY_metrics_export_binaries_run_dir"] = ""
@@ -44,13 +45,12 @@ def client_fn(cid: str):
     return ECGClient(
         client_id=cid,
         model_type=_MODEL_TYPE,
-        alpha=_ALPHA,
     ).to_client()
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
 def main():
-    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE, _ALPHA, _BETA
+    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE, _ALPHA, _BETA, _EPSILON
 
     parser = argparse.ArgumentParser(
         description="Flower Federated Learning Simulation"
@@ -83,6 +83,16 @@ def main():
         "--beta", type=float, default=0.5,
         help="Beta for VAE loss (default: 0.5, ignored for non-VAE)"
     )
+    parser.add_argument(
+        "--epsilon", type=float, default=float('inf'),
+        help="Privacy budget epsilon. Use inf or >0 value for baseline."
+    )
+    parser.add_argument(
+        "--precision_type", type=str, choices=["fp32", "int8"], default="fp32"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42
+    )
     args = parser.parse_args()
 
     # Update module-level config
@@ -92,6 +102,7 @@ def main():
     _MODEL_TYPE = args.model
     _ALPHA = args.alpha
     _BETA = args.beta
+    _EPSILON = args.epsilon
 
     if args.dry_run:
         # Verify everything initialises without error
@@ -123,18 +134,24 @@ def main():
         f"model={_MODEL_TYPE}, epochs/round={_LOCAL_EPOCHS}"
     )
 
+    config_dict={
+        "local_epochs": _LOCAL_EPOCHS,
+        "model_type": _MODEL_TYPE,
+        "beta": _BETA,
+        "alpha": _ALPHA,
+        "epsilon": _EPSILON,
+        "precision_type": args.precision_type,
+        "seed": args.seed,
+    }
+
     # Strategy configuration for Sprint 2 (30% client participation 
     strategy = Strategy(
         fraction_fit=0.3,
         fraction_evaluate=0.3,
         min_fit_clients=3,
         min_available_clients=_NUM_CLIENTS,
-        on_fit_config_fn=lambda _: {
-            "local_epochs": _LOCAL_EPOCHS,
-            "model_type": _MODEL_TYPE,
-			"beta": _BETA,
-			"alpha": _ALPHA,
-        },
+        on_fit_config_fn=lambda _: config_dict,
+        on_evaluate_config_fn=lambda _:config_dict,
     )
 
     has_gpu = torch.cuda.is_available()
@@ -144,6 +161,7 @@ def main():
     }
 
     logger.info(f"Starting FL simulation: {_NUM_ROUNDS} rounds...")
+    start_sim_time = time.perf_counter()
     history = start_simulation(
         client_fn=client_fn,
         num_clients=_NUM_CLIENTS,
@@ -156,11 +174,13 @@ def main():
             "_temp_dir": "C:\\temp"
         }
     )
+    total_sim_time = time.perf_counter() - start_sim_time
+    actual_time_per_round = total_sim_time / _NUM_ROUNDS
 
     if history is None:
         logger.error("Simulation returned none")
         return
-
+    
     # ── Result Processing & Logging ───────────────────────────────────────────────────────
     output_dir = Path("outputs")
     fig_dir = output_dir / "figures"
@@ -168,50 +188,60 @@ def main():
 
     dist_metrics = getattr(history, "metrics_distributed", {})
     fit_metrics = getattr(history, "metrics_distributed_fit", {})
-    auroc_key = next((k for k in dist_metrics.keys() if "auroc" in k.lower()), None) 
-    
-    if auroc_key:
-        data = dist_metrics[auroc_key]
-        rounds = [item[0] for item in data]
-        aurocs = [item[1] for item in data]
-
-        fig, ax = plt.subplots(figsize=(6,4))
-        ax.plot(rounds, aurocs, color=COLORS[0], marker='o', lw=1.5, 
-                label=f"{_MODEL_TYPE}")
-        ax.set(xlabel="FL Round", ylabel="Weighted AUROC",
-               title=f"Federated Convergence")
-        ax.legend(loc="lower right")
-        ax.grid(True, alpha=0.3)
-        plot_path = fig_dir / f"convergence_{_MODEL_TYPE}_alpha{_ALPHA}.png"
-        fig.savefig(plot_path) 
-        plt.close(fig)
-        logger.info(f"Convergence plot saved to {plot_path}")
     
     if dist_metrics:
-        logger.debug(f"DEBUG: fit_metrics keys: {fit_metrics.keys()}")
         final_metrics_summary = {k: v[-1][1] for k, v in dist_metrics.items()}
 
         if "training_time_s" in fit_metrics:
             final_metrics_summary["training_time_s"] = fit_metrics["training_time_s"][-1][1]
+        
+        noise_multiplier = 0.0
+        if "noise_multiplier" in fit_metrics:
+                noise_multiplier = fit_metrics["noise_multiplier"][-1][1]
+    
 
-        #final_metrics_summary["precision_type"] = "int8"
         logger_csv = ResultLogger(
-            output_dir / "convergence_results.csv",
-            extra_columns=["epochs", "rounds", "alpha", "beta"]
+            output_dir / "ablation_results.csv",
+            extra_columns=[
+                "epochs", "rounds", "alpha", 
+                "noise_multiplier", "time_per_round_s"
+            ]
         )
+        if "precision" in final_metrics_summary:
+            final_metrics_summary["precision_score"] = final_metrics_summary.pop("precision")
+        
         logger_csv.log(
             model=_MODEL_TYPE,
-            setting="federated",
+            setting="federated_dp" if _EPSILON != float('inf') else "federated",
             alpha=_ALPHA,
-			beta=_BETA,
+            beta=_BETA,
             epochs=_LOCAL_EPOCHS,
             rounds=_NUM_ROUNDS,
-            **final_metrics_summary
+            seed=args.seed,
+            noise_multiplier=noise_multiplier,
+            time_per_round_s=actual_time_per_round,
+            **final_metrics_summary                                             
         )
-        logger.info(f"Results logged to: {output_dir}/convergence_results.csv")
+        logger.info(f"Ablation Results logged to: {output_dir}/ablation_results.csv")
         
-    logger.info("FL simulation complete.")
+        auroc_key = next((k for k in dist_metrics.keys() if "auroc" in k.lower()), None)
+        if auroc_key:
+            data = dist_metrics[auroc_key]
+            rounds = [item[0] for item in data]
+            aurocs = [item[1] for item in data]
 
+            fig, ax = plt.subplots(figsize=(6,4))
+            ax.plot(rounds, aurocs, color=COLORS[0], marker='o', lw=1.5, 
+                    label=f"{_MODEL_TYPE}")
+            ax.set(xlabel="FL Round", ylabel="Weighted AUROC",
+                title=f"Federated Convergence")
+            ax.legend(loc="lower right")
+            ax.grid(True, alpha=0.3)
+            plot_path = fig_dir / f"convergence_{_MODEL_TYPE}_alpha{_ALPHA}.png"
+            fig.savefig(plot_path) 
+            plt.close(fig)
+            logger.info(f"Convergence plot saved to {plot_path}")
+    logger.info("FL simulation complete.")
 
 if __name__ == "__main__":
     from utils.reproducibility import setup_logging

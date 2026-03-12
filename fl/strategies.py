@@ -33,7 +33,10 @@ class Strategy(fl.server.strategy.FedAvg):
     Custom FedAvg strategy
     Integrates dynamic metric aggregation for the PTB-XL results.
     """
-    def __init__(self, fraction_fit, fraction_evaluate, min_fit_clients, min_available_clients, on_fit_config_fn):
+    def __init__(
+            self, fraction_fit, fraction_evaluate, min_fit_clients, 
+            min_available_clients, on_fit_config_fn, on_evaluate_config_fn
+            ):
         super().__init__(
             fraction_fit=fraction_fit,
             fraction_evaluate=fraction_evaluate,
@@ -42,4 +45,5 @@ class Strategy(fl.server.strategy.FedAvg):
             evaluate_metrics_aggregation_fn=weighted_average,
             fit_metrics_aggregation_fn=weighted_average,
             on_fit_config_fn=on_fit_config_fn,
+            on_evaluate_config_fn=on_evaluate_config_fn,
         )
