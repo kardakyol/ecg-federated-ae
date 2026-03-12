@@ -337,14 +337,23 @@ def run_pipeline(
     signals = np.stack(all_signals, axis=0).astype(np.float32)  # (N, 12, 1000)
     log.info("Signal array shape: %s", signals.shape)
 
-    # ---- Patient-level split ----
+        # ---- Patient-level split ----
     train_idx, val_idx, test_idx = patient_split(metadata, labels, seed=seed)
-    log.info("Split: train=%d, val=%d, test=%d", len(train_idx), len(val_idx), len(test_idx))
+    log.info("Split (initial): train=%d, val=%d, test=%d", len(train_idx), len(val_idx), len(test_idx))
 
-    # ---- Normalize per lead (fit on train, apply to all) ----
-    train_signals = signals[train_idx].copy()
+ 
+    actual_train_idx = np.array([i for i in train_idx if labels[i] == 0])
+    train_signals = signals[actual_train_idx].copy()
+    train_labels = labels[actual_train_idx]
+
     val_signals = signals[val_idx].copy()
+    val_labels = labels[val_idx]
     test_signals = signals[test_idx].copy()
+    test_labels = labels[test_idx]
+
+    log.info("Split (cleaned): train=%d (all NORM), val=%d, test=%d", 
+            len(train_labels), len(val_labels), len(test_labels))
+
 
     lead_mins = np.zeros(NUM_LEADS, dtype=np.float32)
     lead_maxs = np.zeros(NUM_LEADS, dtype=np.float32)
@@ -361,7 +370,7 @@ def run_pipeline(
             else:
                 arr[:, lead, :] = 0.0
 
-    train_labels = labels[train_idx]
+    train_labels = labels[actual_train_idx] 
     val_labels = labels[val_idx]
     test_labels = labels[test_idx]
 
@@ -372,6 +381,8 @@ def run_pipeline(
         ("val", val_signals, val_labels),
         ("test", test_signals, test_labels),
     ]:
+        assert len(sig) == len(lbl), f"Dim Error: {name} signal={len(sig)}, label={len(lbl)}"
+        
         np.save(output_dir / f"{name}_signals.npy", sig.astype(np.float32))
         np.save(output_dir / f"{name}_labels.npy", lbl.astype(np.int64))
         n0 = int((lbl == 0).sum())

@@ -59,16 +59,16 @@ class DecoderBlock(nn.Module):
 
 
 class VAE(BaseAutoencoder):
-    """Variational Autoencoder for 12-lead ECG anomaly detection."""
+    """Variational Autoencoder for 12-lead ECG anomaly detection.
+    Updated with Loss Scaling and Annealing support to prevent Posterior Collapse.
+    """
 
     def __init__(self, config: VAEArchitectureConfig | None = None) -> None:
         super().__init__()
         cfg = config or VAEArchitectureConfig()
         self.config = cfg
 
-        # ================================================================
-        # ENCODER
-        # ================================================================
+        # --- ENCODER ---
         channels = [cfg.in_channels] + cfg.encoder_channels
         self.encoder = nn.ModuleList([
             EncoderBlock(channels[i], channels[i + 1], cfg.kernel_size,
@@ -76,10 +76,6 @@ class VAE(BaseAutoencoder):
             for i in range(len(cfg.encoder_channels))
         ])
 
-        # Calculate the temporal dimension after all encoder layers.
-        # Each Conv1d with stride=2, kernel=7, padding=3 halves the length:
-        #   L_out = floor((L_in + 2*padding - kernel) / stride) + 1
-        # For our config: floor((L + 2*3 - 7) / 2) + 1 = floor((L-1)/2) + 1
         self._enc_temporal = cfg.seq_len
         for _ in cfg.encoder_channels:
             self._enc_temporal = math.floor(
@@ -87,17 +83,10 @@ class VAE(BaseAutoencoder):
             ) + 1
         self._flat_dim = cfg.encoder_channels[-1] * self._enc_temporal
 
-        # Latent projections: flat features -> mu and logvar
-        # WHY SEPARATE LAYERS (not one big layer split in half):
-        #   Separate layers give each projection its own learnable bias,
-        #   allowing mu and logvar to have different offset distributions.
         self.fc_mu = nn.Linear(self._flat_dim, cfg.latent_dim)
         self.fc_logvar = nn.Linear(self._flat_dim, cfg.latent_dim)
 
-        # ================================================================
-        # DECODER
-        # ================================================================
-        # Mirror the encoder: latent -> FC -> unflatten -> ConvTranspose1d blocks
+        # --- DECODER ---
         self.fc_decode = nn.Linear(cfg.latent_dim, self._flat_dim)
 
         dec_channels = list(reversed(cfg.encoder_channels))
@@ -111,51 +100,50 @@ class VAE(BaseAutoencoder):
         ])
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Encode input to latent distribution parameters mu, logvar."""
         h = x
         for block in self.encoder:
             h = block(h)
         h = h.flatten(start_dim=1)
         return self.fc_mu(h), self.fc_logvar(h)
 
-    def reparameterise(self, mu: torch.Tensor,
-                       logvar: torch.Tensor) -> torch.Tensor:
-        """Sample z from q(z|x) using the reparameterisation trick."""
-        logvar = torch.clamp(logvar, min=-20.0, max=2.0)
+    def reparameterise(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        logvar = torch.clamp(logvar, min=-10.0, max=10.0)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + std * eps
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """Decode latent vector to reconstructed ECG signal."""
         h = self.fc_decode(z)
         h = h.view(-1, self.config.encoder_channels[-1], self._enc_temporal)
         for block in self.decoder:
             h = block(h)
-        # Fix temporal dimension to match input exactly
         if h.shape[-1] != self.config.seq_len:
-            h = F.interpolate(h, size=self.config.seq_len, mode='linear',
-                              align_corners=False)
+            h = F.interpolate(h, size=self.config.seq_len, mode='linear', align_corners=False)
         return h
 
     def forward(self, x: torch.Tensor) -> AEOutput:
-        """Full forward pass: encode -> sample -> decode."""
         mu, logvar = self.encode(x)
         z = self.reparameterise(mu, logvar)
         x_hat = self.decode(z)
         return AEOutput(x_hat=x_hat, mu=mu, logvar=logvar, z=z)
 
     def compute_loss(self, x: torch.Tensor, output: AEOutput,
-                     beta: float = 1.0, kl_weight: float = 1.0,
+                     beta: float = 0.1, kl_weight: float = 1.0,
                      **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute beta-VAE loss: MSE + beta * kl_weight * KL."""
+        """Beta-VAE loss with balanced scaling.
+        
+        Args:
+            beta: KL weighting coefficient (0.1 is a good start for ECG).
+            kl_weight: Can be used for annealing (0.0 at start, 1.0 at end of training).
+        """
+        # Reconstruction Loss (Mean over all 12000 points)
         mse = F.mse_loss(output.x_hat, x, reduction='mean')
 
-        logvar_clamped = torch.clamp(output.logvar, min=-20.0, max=2.0)
-        kl = -0.5 * torch.sum(
-            1 + logvar_clamped - output.mu.pow(2) - logvar_clamped.exp()
-        )
-        kl = kl / x.shape[0]  # per-sample KL
+        # KL Divergence
+        kl = -0.5 * torch.sum(1 + output.logvar - output.mu.pow(2) - output.logvar.exp())
+
+        num_features = x.shape[1] * x.shape[2] # 12 * 1000 = 12000
+        kl = kl / (x.shape[0] * num_features)
 
         total = mse + beta * kl_weight * kl
         return total, mse, kl

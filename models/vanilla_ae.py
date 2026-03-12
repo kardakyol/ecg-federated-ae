@@ -22,26 +22,25 @@ class VanillaAE(BaseAutoencoder):
         self.input_dim = n_leads * seq_len  # 12000
 
         self.encoder = nn.Sequential(
-            nn.Linear(self.input_dim, 2048),
+            nn.Linear(self.input_dim, 512),
             nn.ReLU(inplace=False),
-            nn.Linear(2048, 512),
+            nn.Linear(512, 256),
             nn.ReLU(inplace=False),
-            nn.Linear(512, 128),
+            nn.Linear(256, 64),
             nn.ReLU(inplace=False),
-            nn.Linear(128, bottleneck),
-            nn.ReLU(inplace=False),
+            nn.Linear(64, bottleneck),
         )
 
         self.decoder = nn.Sequential(
-            nn.Linear(bottleneck, 128),
-            nn.ReLU(inplace=False),
-            nn.Linear(128, 512),
-            nn.ReLU(inplace=False),
-            nn.Linear(512, 2048),
-            nn.ReLU(inplace=False),
-            nn.Linear(2048, self.input_dim),
-            
-        )
+    nn.Linear(bottleneck, 64),
+    nn.ReLU(inplace=False),
+    nn.Linear(64, 256),
+    nn.ReLU(inplace=False),
+    nn.Linear(256, 512),
+    nn.ReLU(inplace=False),
+    nn.Linear(512, self.input_dim),
+)
+        
 
     def forward(self, x: torch.Tensor) -> AEOutput:
         """

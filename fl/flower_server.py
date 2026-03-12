@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 # ── Module-level config (updated by argparse before simulation) ──────
-_NUM_ROUNDS = 3
-_NUM_CLIENTS = 2
-_LOCAL_EPOCHS = 1
-_MODEL_TYPE = "vanilla"
+_NUM_ROUNDS = 50
+_NUM_CLIENTS = 10
+_LOCAL_EPOCHS = 5
+_MODEL_TYPE = "conv"
+_BETA = 0.5
 
 
 # ── Client App ───────────────────────────────────────────────────────
@@ -40,8 +41,6 @@ client_app = ClientApp(client_fn=client_fn)
 
 # ── Server App ───────────────────────────────────────────────────────
 def server_fn(context: Context):
-    # Sprint 1: Standard FedAvg
-    # Sprint 2 TODO: Custom Strategy in fl/strategies.py
     strategy = fl.server.strategy.FedAvg(
         fraction_fit=1.0,
         min_fit_clients=_NUM_CLIENTS,
@@ -49,6 +48,7 @@ def server_fn(context: Context):
         on_fit_config_fn=lambda _: {
             "local_epochs": _LOCAL_EPOCHS,
             "model_type": _MODEL_TYPE,
+            "beta": _BETA,
         },
     )
     config = ServerConfig(num_rounds=_NUM_ROUNDS)
@@ -60,26 +60,30 @@ server_app = ServerApp(server_fn=server_fn)
 
 # ── CLI ──────────────────────────────────────────────────────────────
 def main():
-    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE
+    global _NUM_ROUNDS, _NUM_CLIENTS, _LOCAL_EPOCHS, _MODEL_TYPE, _BETA
 
     parser = argparse.ArgumentParser(
         description="Flower Federated Learning Simulation"
     )
     parser.add_argument(
-        "--rounds", type=int, default=3,
-        help="Number of FL rounds (default: 3)"
+        "--rounds", type=int, default=50,
+        help="Number of FL rounds (default: 50)"
     )
     parser.add_argument(
-        "--epochs", type=int, default=1,
-        help="Local epochs per round (default: 1)"
+        "--epochs", type=int, default=5,
+        help="Local epochs per round (default: 5)"
     )
     parser.add_argument(
-        "--model", type=str, default="vanilla",
-        help="Model: vanilla, conv, or vae (default: vanilla)"
+        "--model", type=str, default="conv",
+        help="Model: vanilla, conv, or vae (default: conv)"
     )
     parser.add_argument(
-        "--clients", type=int, default=2,
-        help="Number of virtual clients (default: 2)"
+        "--clients", type=int, default=10,
+        help="Number of virtual clients (default: 10)"
+    )
+    parser.add_argument(
+        "--beta", type=float, default=0.5,
+        help="Beta for VAE loss (default: 0.5, ignored for non-VAE)"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -92,6 +96,7 @@ def main():
     _NUM_CLIENTS = args.clients
     _LOCAL_EPOCHS = args.epochs
     _MODEL_TYPE = args.model
+    _BETA = args.beta
 
     if args.dry_run:
         # Verify everything initialises without error
