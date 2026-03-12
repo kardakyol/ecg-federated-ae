@@ -24,7 +24,7 @@ class ECGClient(fl.client.NumPyClient):
         self.model = get_model(model_type).to(self.device)
 
         # Data loading logic
-        data_dir = Path("data/ptb-xl")
+        data_dir = Path("data/ptb-xl-zscore")
         all_splits = load_splits(data_dir)
         indices_path = data_dir / "client_splits" / f"client_{client_id}_indices.npy"
 
