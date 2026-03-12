@@ -1,13 +1,21 @@
 """
 run_vae_ablation.py — Person C (Kaan), Sprint 3
 ================================================
-VAE bottleneck ablation: latent_dim in {16, 32, 64, 128}, 3 seeds each.
-Results appended to outputs/vae_baselines.csv (same format as existing rows).
+VAE bottleneck ablation: latent_dim in {8, 16, 32, 64, 128}, 3 seeds each.
+
+Sprint 3 updates:
+  - CosineAnnealingWarmRestarts (from max_auroc_pipeline)
+  - Gradient clipping max_norm=1.0
+  - weight_decay=1e-5
+  - patience=25
+  - epochs=200 (was 100)
+  - Added bn=8 to range
+  - Default data_dir=data/ptb-xl-zscore
 
 Usage:
-    python scripts/run_vae_ablation.py --data_dir data/ptb-xl
-    python scripts/run_vae_ablation.py --data_dir data/ptb-xl --bottlenecks 16 32
-    python scripts/run_vae_ablation.py --synthetic --quick        # pipeline test
+    python scripts/run_vae_ablation.py --data_dir data/ptb-xl-zscore
+    python scripts/run_vae_ablation.py --data_dir data/ptb-xl-zscore --bottlenecks 8 16 32
+    python scripts/run_vae_ablation.py --synthetic --quick
 """
 
 from __future__ import annotations
@@ -24,7 +32,7 @@ import torch.nn.functional as F
 from dataclasses import dataclass, field
 from typing import List
 from torch.optim import Adam
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import roc_auc_score, average_precision_score
 
@@ -181,30 +189,34 @@ def make_synthetic(quick: bool = False) -> dict:
             "test":  TensorDataset(te, ty)}
 
 
-def make_loaders(splits, bs=32) -> dict:
+def make_loaders(splits, bs=64) -> dict:
     return {k: DataLoader(v, batch_size=bs, shuffle=(k == "train"), drop_last=False)
             for k, v in splits.items()}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Train / Evaluate
+# Train / Evaluate (Sprint 3: cosine annealing + grad clip)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_model(model, loaders, device, epochs, beta=0.5, patience=15):
-    opt  = Adam(model.parameters(), lr=1e-3)
-    sched = ReduceLROnPlateau(opt, patience=5, factor=0.5, min_lr=1e-5)
+def train_model(model, loaders, device, epochs, beta=0.5, patience=25):
+    """Sprint 3 optimised training loop matching max_auroc_pipeline."""
+    opt = Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    sched = CosineAnnealingWarmRestarts(opt, T_0=20, T_mult=2, eta_min=1e-6)
     best, no_imp, best_state = float("inf"), 0, None
 
     for epoch in range(1, epochs + 1):
         kl_w = min(1.0, epoch / 20.0)
         model.train()
-        for (x,) in loaders["train"]:
+        for batch_idx, (x,) in enumerate(loaders["train"]):
             x = x.to(device)
             opt.zero_grad()
             x_hat, mu, lv = model(x)
             loss, _ = model.loss(x, x_hat, mu, lv, beta, kl_w)
             loss.backward()
+            # Sprint 3: gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
+            sched.step(epoch + batch_idx / max(len(loaders["train"]), 1))
 
         model.eval()
         vl = []
@@ -215,7 +227,6 @@ def train_model(model, loaders, device, epochs, beta=0.5, patience=15):
                 _, mse = model.loss(x, x_hat, mu, lv, beta, 1.0)
                 vl.append(mse.item())
         val_mse = float(np.mean(vl))
-        sched.step(val_mse)
 
         if val_mse < best - 1e-6:
             best, no_imp = val_mse, 0
@@ -293,21 +304,21 @@ def append_csv(path: str, row: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="VAE Bottleneck Ablation — Sprint 3 (Person C)")
-    parser.add_argument("--data_dir",    default="data/ptb-xl")
+    parser = argparse.ArgumentParser(description="VAE Bottleneck Ablation — Sprint 3")
+    parser.add_argument("--data_dir",    default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic",   action="store_true")
     parser.add_argument("--quick",       action="store_true",
-                        help="Fast test: 1 seed, 5 epochs, 2 bottleneck configs")
+                        help="Fast test: 1 seed, 10 epochs, 2 configs")
     parser.add_argument("--bottlenecks", type=int, nargs="+",
-                        help="Bottleneck sizes (default: 16 32 64 128)")
+                        help="Bottleneck sizes (default: 8 16 32 64 128)")
     parser.add_argument("--epochs",      type=int, default=None)
     parser.add_argument("--device",      type=str, default=None)
     args = parser.parse_args()
 
     device      = torch.device(args.device) if args.device else get_device()
-    epochs      = args.epochs or (5 if args.quick else 100)
+    epochs      = args.epochs or (10 if args.quick else 200)
     seeds       = [SEEDS[0]] if args.quick else SEEDS
-    bottlenecks = args.bottlenecks or [16, 32, 64, 128]
+    bottlenecks = args.bottlenecks or [8, 16, 32, 64, 128]
     if args.quick:
         bottlenecks = bottlenecks[:2]
     out_csv = "outputs/vae_baselines.csv"

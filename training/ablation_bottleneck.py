@@ -1,3 +1,17 @@
+"""
+BOTTLENECK ABLATION — Sprint 3 (Persons B + C)
+================================================
+Tests {8, 16, 32, 64, 128} for vanilla_ae, conv_ae, and vae.
+Uses Sprint 3 optimised training (cosine annealing, grad clip, val MSE early stop).
+
+Produces: outputs/ablation_bottleneck.csv
+
+Usage:
+    python training/ablation_bottleneck.py --data_dir data/ptb-xl-zscore
+    python training/ablation_bottleneck.py --data_dir data/ptb-xl-zscore --model conv_ae
+    python training/ablation_bottleneck.py --synthetic --epochs 20
+"""
+
 import argparse
 import os
 import time
@@ -5,6 +19,7 @@ import logging
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 
 from utils.dataset import load_splits, create_synthetic_data, create_dataloaders
@@ -22,18 +37,16 @@ logger = logging.getLogger(__name__)
 MODEL_REGISTRY = {
     "vanilla_ae": VanillaAE,
     "conv_ae": ConvAE,
-    "vae": VAE
+    "vae": VAE,
 }
 
-BOTTLENECK_SIZES = [16, 32, 64, 128]
-
+# Sprint 3: added bn=8 to ablation range
+BOTTLENECK_SIZES = [8, 16, 32, 64, 128]
 
 
 def compute_anomaly_scores(model, loader, device):
-    """Per-sample MSE reconstruction error as anomaly score."""
     model.eval()
-    all_scores = []
-    all_labels = []
+    all_scores, all_labels = [], []
     with torch.no_grad():
         for signals, labels in loader:
             signals = signals.to(device)
@@ -45,7 +58,6 @@ def compute_anomaly_scores(model, loader, device):
 
 
 def find_threshold(model, val_normal_loader, device, percentile=95):
-    """Threshold from normal validation reconstruction errors."""
     model.eval()
     scores = []
     with torch.no_grad():
@@ -57,58 +69,74 @@ def find_threshold(model, val_normal_loader, device, percentile=95):
     return float(np.percentile(np.concatenate(scores), percentile))
 
 
-
-
 def train_single(model_name, bottleneck, loaders, seed, device,
-                 epochs=50, lr=1e-3, weight_decay=1e-5):
-    """Train one model config, return MetricsResult."""
+                 epochs=200, lr=1e-3, weight_decay=1e-5, patience=25):
+    """Train one model config with Sprint 3 optimised loop."""
     set_seed(seed)
 
     model = MODEL_REGISTRY[model_name](bottleneck=bottleneck).to(device)
+
+    # Sprint 3: CosineAnnealingWarmRestarts (matches max_auroc_pipeline)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=20, T_mult=2, eta_min=1e-6
+    )
 
     n_params = model.count_parameters()
     size_mb = model.model_size_mb()
-    logger.info(f"  {model_name} | bottleneck={bottleneck} | seed={seed} | "
+    logger.info(f"  {model_name} | bn={bottleneck} | seed={seed} | "
                 f"params={n_params:,} | size={size_mb:.2f} MB")
 
-    best_val_auroc = 0.0
+    best_val_mse = float('inf')
     best_state = None
+    no_improve = 0
     train_start = time.time()
 
     for epoch in range(epochs):
         model.train()
         epoch_losses = []
-        for signals, labels in loaders["train"]:
+        for batch_idx, (signals, labels) in enumerate(loaders["train"]):
             signals = signals.to(device)
             optimizer.zero_grad()
             output = model(signals)
             loss = model.compute_loss(signals, output)[0]
             loss.backward()
+            # Sprint 3: gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            scheduler.step(epoch + batch_idx / max(len(loaders["train"]), 1))
             epoch_losses.append(loss.item())
 
-        avg_loss = np.mean(epoch_losses)
-        scheduler.step(avg_loss)
+        # Sprint 3: validate on val MSE (not AUROC)
+        model.eval()
+        val_mse_sum, n_val = 0.0, 0
+        with torch.no_grad():
+            for signals, labels in loaders["val"]:
+                signals = signals.to(device)
+                output = model(signals)
+                val_mse_sum += F.mse_loss(output.x_hat, signals).item()
+                n_val += 1
+        avg_val_mse = val_mse_sum / max(n_val, 1)
 
-    
-        val_scores, val_labels = compute_anomaly_scores(model, loaders["val"], device)
-        val_threshold = find_threshold(model, loaders["val_normal"], device)
-        val_result = compute_metrics(val_labels, val_scores, val_threshold)
-
-        if val_result.auroc > best_val_auroc:
-            best_val_auroc = val_result.auroc
+        if avg_val_mse < best_val_mse:
+            best_val_mse = avg_val_mse
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            no_improve = 0
+        else:
+            no_improve += 1
 
-        if (epoch + 1) % 10 == 0:
-            logger.info(f"    Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} | "
-                        f"Val AUROC: {val_result.auroc:.4f}")
+        if (epoch + 1) % 25 == 0:
+            logger.info(f"    Epoch {epoch+1}/{epochs} | Loss: {np.mean(epoch_losses):.6f} | "
+                        f"Val MSE: {avg_val_mse:.6f} | Best: {best_val_mse:.6f}")
+
+        if no_improve >= patience:
+            logger.info(f"    Early stop at epoch {epoch+1}")
+            break
 
     train_time = time.time() - train_start
-    model.load_state_dict(best_state)
+    if best_state:
+        model.load_state_dict(best_state)
 
-    
     test_scores, test_labels = compute_anomaly_scores(model, loaders["test"], device)
     test_threshold = find_threshold(model, loaders["val_normal"], device)
     test_result = compute_metrics(test_labels, test_scores, test_threshold)
@@ -118,20 +146,16 @@ def train_single(model_name, bottleneck, loaders, seed, device,
     return test_result, size_mb, train_time
 
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Bottleneck Ablation")
-    parser.add_argument("--data_dir", type=str, default="data/ptb-xl")
+    parser = argparse.ArgumentParser(description="Bottleneck Ablation — Sprint 3")
+    parser.add_argument("--data_dir", type=str, default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=str, default=None,
-                        choices=["vanilla_ae", "conv_ae", "vae"],
-                        help="Run one model only (default: both)")
-    parser.add_argument("--bottlenecks", type=int, nargs="+", default=None,
-                        help="Override bottleneck sizes (default: 16 32 64 128)")
-    parser.add_argument("--seeds", type=int, nargs="+", default=None,
-                        help="Override seeds (default: 42 123 456)")
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=128)
+                        choices=["vanilla_ae", "conv_ae", "vae"])
+    parser.add_argument("--bottlenecks", type=int, nargs="+", default=None)
+    parser.add_argument("--seeds", type=int, nargs="+", default=None)
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
 
@@ -140,7 +164,6 @@ def main():
     device = get_device()
     logger.info(f"Device: {device}")
 
-    
     if args.synthetic:
         logger.info("Using SYNTHETIC data")
         splits = create_synthetic_data(n_train=2000, n_val=500, n_test=500)
@@ -150,11 +173,10 @@ def main():
 
     loaders = create_dataloaders(splits, batch_size=args.batch_size)
 
- 
-    models_to_run = [args.model] if args.model else ["vanilla_ae", "conv_ae"]
+    # Sprint 3: all 3 models by default, bn 8-128
+    models_to_run = [args.model] if args.model else ["vanilla_ae", "conv_ae", "vae"]
     bottlenecks = args.bottlenecks or BOTTLENECK_SIZES
     seeds = args.seeds or SEEDS
-
 
     os.makedirs("outputs", exist_ok=True)
     csv_logger = ResultLogger("outputs/ablation_bottleneck.csv",
@@ -163,9 +185,9 @@ def main():
     logger.info(f"Models: {models_to_run}")
     logger.info(f"Bottlenecks: {bottlenecks}")
     logger.info(f"Seeds: {seeds}")
+    logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Total runs: {len(models_to_run) * len(bottlenecks) * len(seeds)}")
 
-    
     for model_name in models_to_run:
         for bn in bottlenecks:
             logger.info(f"\n{'='*60}")
@@ -184,6 +206,7 @@ def main():
                 csv_logger.log(
                     model=model_name,
                     bottleneck=bn,
+                    setting=f"ablation_bn{bn}",
                     seed=seed,
                     auroc=result.auroc,
                     auprc=result.auprc,
@@ -195,7 +218,6 @@ def main():
                     training_time_s=train_time,
                 )
 
-            
             agg = aggregate_seeds(results_per_seed)
             logger.info(f"\n  Aggregated ({len(seeds)} seeds):")
             logger.info(format_aggregated(agg))

@@ -3,6 +3,7 @@ RAHEEB: Model factory for FL pipeline.
 
 Sprint 1: All model types returned DummyAE for pipeline testing.
 Sprint 2: Real models now active — VanillaAE, ConvAE, VAE.
+Sprint 3: Updated default bottleneck to 128 (B+C ablation result).
 """
 
 import torch
@@ -35,11 +36,16 @@ class DummyAE(BaseAutoencoder):
         return (loss,)
 
 
-def get_model(model_name: str):
+# Sprint 3: bottleneck=128 is the project default (from B+C ablation)
+DEFAULT_BOTTLENECK = 128
+
+
+def get_model(model_name: str, bottleneck: int = DEFAULT_BOTTLENECK):
     """Return a model instance by name.
 
     Args:
         model_name: "vanilla", "conv", "vae", or "dummy"
+        bottleneck: latent dimension (default: 128)
 
     Returns:
         BaseAutoencoder instance
@@ -47,11 +53,11 @@ def get_model(model_name: str):
     name = model_name.lower()
 
     if name == "vanilla":
-        return VanillaAE(bottleneck=32)
+        return VanillaAE(bottleneck=bottleneck)
     elif name == "conv":
-        return ConvAE(bottleneck=32)
+        return ConvAE(bottleneck=bottleneck)
     elif name == "vae":
-        return VAE()
+        return VAE()  # VAE uses its own config; bottleneck set via VAEArchitectureConfig
     elif name == "dummy":
         return DummyAE()
 
