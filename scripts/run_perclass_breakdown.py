@@ -9,6 +9,10 @@ Sprint 3 updates:
   - patience=25, epochs=200
   - Default data_dir=data/ptb-xl-zscore
 
+FIX (Sprint 4): VAE now uses proper VAE class + VAEArchitectureConfig +
+  MSE-only anomaly scoring (alpha=0.0), matching vae_baselines.csv pipeline.
+  ConvAE and VanillaAE inline implementations are unchanged.
+
 Usage:
     python scripts/run_perclass_breakdown.py --data_dir data/ptb-xl-zscore
     python scripts/run_perclass_breakdown.py --data_dir data/ptb-xl-zscore --train_first
@@ -34,6 +38,11 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import roc_auc_score, average_precision_score
 
+# Import proper VAE from project modules
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from models.vae import VAE
+from configs.vae_config import VAEConfig, VAEArchitectureConfig
+
 
 SUPERCLASS_NAMES = {0: "NORM", 1: "MI", 2: "STTC", 3: "HYP", 4: "CD"}
 ANOMALY_CLASSES  = [1, 2, 3, 4]
@@ -55,58 +64,7 @@ def get_device():
     return torch.device("cpu")
 
 
-# ── Inline models (same architecture, bn=128 default) ──
-
-@dataclass
-class VAEConfig:
-    in_channels: int = 12; seq_len: int = 1000
-    encoder_channels: List[int] = field(default_factory=lambda: [32, 64, 128, 256])
-    kernel_size: int = 7; stride: int = 2; dropout: float = 0.1
-    latent_dim: int = DEFAULT_BN
-
-class _EBlock(nn.Module):
-    def __init__(self, ic, oc, k, s, d):
-        super().__init__()
-        p = (k-1)//2
-        self.net = nn.Sequential(nn.Conv1d(ic, oc, k, s, p, bias=False),
-            nn.GroupNorm(min(32, oc), oc), nn.LeakyReLU(0.2, False), nn.Dropout(d))
-    def forward(self, x): return self.net(x)
-
-class _DBlock(nn.Module):
-    def __init__(self, ic, oc, k, s, last=False):
-        super().__init__()
-        p = (k-1)//2
-        self.dc = nn.ConvTranspose1d(ic, oc, k, s, p, output_padding=s-1, bias=False)
-        self.last = last
-        if not last: self.post = nn.Sequential(nn.GroupNorm(min(32, oc), oc), nn.LeakyReLU(0.2, False))
-    def forward(self, x):
-        x = self.dc(x); return x if self.last else self.post(x)
-
-class VAENet(nn.Module):
-    def __init__(self, cfg: VAEConfig):
-        super().__init__()
-        self.cfg = cfg
-        chs = [cfg.in_channels] + cfg.encoder_channels
-        self.encoder = nn.ModuleList([_EBlock(chs[i], chs[i+1], cfg.kernel_size, cfg.stride, cfg.dropout) for i in range(len(cfg.encoder_channels))])
-        t = cfg.seq_len
-        for _ in cfg.encoder_channels: t = math.floor((t + 2*((cfg.kernel_size-1)//2) - cfg.kernel_size) / cfg.stride) + 1
-        self._t = t; self._f = cfg.encoder_channels[-1] * t
-        self.fc_mu = nn.Linear(self._f, cfg.latent_dim); self.fc_lv = nn.Linear(self._f, cfg.latent_dim)
-        self.fc_dec = nn.Linear(cfg.latent_dim, self._f)
-        dc = list(reversed(cfg.encoder_channels)) + [cfg.in_channels]
-        self.decoder = nn.ModuleList([_DBlock(dc[i], dc[i+1], cfg.kernel_size, cfg.stride, last=(i==len(dc)-2)) for i in range(len(dc)-1)])
-    def forward(self, x):
-        h = x
-        for b in self.encoder: h = b(h)
-        h = h.flatten(1); mu = self.fc_mu(h); lv = self.fc_lv(h)
-        lvc = torch.clamp(lv, -20, 2); z = mu + torch.exp(0.5 * lvc) * torch.randn_like(mu)
-        h = self.fc_dec(z).view(-1, self.cfg.encoder_channels[-1], self._t)
-        for b in self.decoder: h = b(h)
-        if h.shape[-1] != self.cfg.seq_len: h = F.interpolate(h, self.cfg.seq_len, mode='linear', align_corners=False)
-        return h, mu, lv
-    def anomaly_score(self, x):
-        x_hat, _, _ = self.forward(x); return torch.mean((x_hat - x) ** 2, dim=(1, 2))
-    def size_mb(self): return sum(p.numel() * p.element_size() for p in self.parameters()) / 1e6
+# ── Inline models for ConvAE and VanillaAE (unchanged) ──
 
 class ConvAENet(nn.Module):
     def __init__(self, bottleneck=DEFAULT_BN, n_leads=12, seq_len=1000):
@@ -150,6 +108,30 @@ class VanillaAENet(nn.Module):
     def size_mb(self): return sum(p.numel() * p.element_size() for p in self.parameters()) / 1e6
 
 
+# ── VAE anomaly scoring (MSE-only, alpha=0.0, matching vae_baselines pipeline) ──
+
+def vae_anomaly_score_batch(model: VAE, x: torch.Tensor, n_mc_samples: int = 10) -> torch.Tensor:
+    """MSE-only anomaly score for VAE, averaged over MC samples.
+
+    alpha=0.0 means KL term is excluded — consistent with vae_baselines.csv
+    pipeline (AnomalyScoringConfig.alpha=0.0).
+
+    Args:
+        model:          Trained VAE instance (models/vae.py).
+        x:              Input batch, shape (B, 12, 1000).
+        n_mc_samples:   Number of MC forward passes to average over.
+
+    Returns:
+        Anomaly scores, shape (B,).
+    """
+    scores = torch.zeros(x.shape[0], device=x.device)
+    for _ in range(n_mc_samples):
+        output = model(x)
+        mse = torch.mean((output.x_hat - x) ** 2, dim=(1, 2))  # (B,)
+        scores += mse
+    return scores / n_mc_samples
+
+
 # ── Data ──
 
 def load_data(data_dir: str, quick: bool = False) -> dict:
@@ -185,8 +167,10 @@ def make_synthetic(quick=False):
 
 
 # ── Training (Sprint 3: cosine annealing + grad clip) ──
+# Used for ConvAE and VanillaAE only. VAE uses its own VAETrainer via checkpoint.
 
-def train_generic(model, train_x, val_x, device, epochs, beta=0.5, patience=25):
+def train_generic(model, train_x, val_x, device, epochs, patience=25):
+    """Train ConvAE or VanillaAE. Not used for VAE."""
     train_loader = DataLoader(TensorDataset(train_x), batch_size=64, shuffle=True)
     val_loader = DataLoader(TensorDataset(val_x), batch_size=64)
     opt = Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
@@ -194,17 +178,10 @@ def train_generic(model, train_x, val_x, device, epochs, beta=0.5, patience=25):
     best, no_imp, best_state = float("inf"), 0, None
 
     for epoch in range(1, epochs + 1):
-        kl_w = min(1.0, epoch / 20.0)
         model.train()
         for batch_idx, (x,) in enumerate(train_loader):
             x = x.to(device); opt.zero_grad()
-            if isinstance(model, VAENet):
-                x_hat, mu, lv = model(x)
-                lvc = torch.clamp(lv, -20, 2)
-                kl = -0.5 * torch.sum(1 + lvc - mu.pow(2) - lvc.exp()) / x.shape[0]
-                loss = F.mse_loss(x_hat, x) + beta * kl_w * kl
-            else:
-                x_hat = model(x); loss = F.mse_loss(x_hat, x)
+            x_hat = model(x); loss = F.mse_loss(x_hat, x)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -214,8 +191,7 @@ def train_generic(model, train_x, val_x, device, epochs, beta=0.5, patience=25):
         with torch.no_grad():
             for (x,) in val_loader:
                 x = x.to(device)
-                if isinstance(model, VAENet): x_hat, _, _ = model(x)
-                else: x_hat = model(x)
+                x_hat = model(x)
                 vl.append(F.mse_loss(x_hat, x).item())
         vm = float(np.mean(vl))
         if vm < best - 1e-6:
@@ -228,10 +204,28 @@ def train_generic(model, train_x, val_x, device, epochs, beta=0.5, patience=25):
     if best_state: model.load_state_dict(best_state)
 
 
-def get_scores(model, test_x, device, bs=64):
+def get_scores_generic(model, test_x, device, bs=64):
+    """Get anomaly scores for ConvAE or VanillaAE."""
     model.eval(); all_s = []
     for (x,) in DataLoader(TensorDataset(test_x), batch_size=bs):
-        with torch.no_grad(): x = x.to(device); all_s.extend(model.anomaly_score(x).cpu().numpy())
+        with torch.no_grad():
+            x = x.to(device)
+            all_s.extend(model.anomaly_score(x).cpu().numpy())
+    return np.array(all_s)
+
+
+def get_scores_vae(model: VAE, test_x: torch.Tensor, device: torch.device,
+                   bs: int = 64, n_mc_samples: int = 10) -> np.ndarray:
+    """Get MSE-only anomaly scores for VAE with MC averaging.
+
+    Consistent with vae_baselines.csv: alpha=0.0, n_mc_samples=10.
+    """
+    model.eval(); all_s = []
+    for (x,) in DataLoader(TensorDataset(test_x), batch_size=bs):
+        with torch.no_grad():
+            x = x.to(device)
+            scores = vae_anomaly_score_batch(model, x, n_mc_samples=n_mc_samples)
+            all_s.extend(scores.cpu().numpy())
     return np.array(all_s)
 
 
@@ -267,18 +261,119 @@ def append_csv(path, row):
         w.writerow({c: row.get(c, "") for c in COLS})
 
 
+# ── Checkpoint paths ──
+
+CHECKPOINT_MAP = {
+    # VAE: seed-specific checkpoints from vae_baselines.py (beta=0.5)
+    # If seed-specific checkpoints don't exist, falls back to shared best.
+    "VAE": {
+        42:  "checkpoints/vae_beta0.5_seed42_best.pt",
+        123: "checkpoints/vae_beta0.5_seed123_best.pt",
+        456: "checkpoints/vae_beta0.5_seed456_best.pt",
+        "fallback": "checkpoints/vae_beta0.5_best.pt",
+    },
+    "ConvAE":    "checkpoints/conv_ae_seed{seed}.pt",
+    "VanillaAE": "checkpoints/vanilla_ae_seed{seed}.pt",
+}
+
+
+# ── VAE loading ──
+
+def load_vae(seed: int, device: torch.device, train_first: bool,
+             data: dict, epochs: int) -> VAE:
+    """Load VAE using proper VAEArchitectureConfig (latent_dim=128).
+
+    Priority:
+      1. Seed-specific checkpoint (vae_beta0.5_seed{seed}_best.pt)
+      2. Shared fallback checkpoint (vae_beta0.5_best.pt)
+      3. Train from scratch using proper VAE class + CosineAnnealing
+    """
+    cfg = VAEConfig()
+    cfg.architecture.latent_dim = DEFAULT_BN  # 128, consistent with Sprint 3
+    model = VAE(cfg.architecture).to(device)
+
+    if not train_first:
+        ckpt_paths = [
+            Path(CHECKPOINT_MAP["VAE"][seed]),
+            Path(CHECKPOINT_MAP["VAE"]["fallback"]),
+        ]
+        for ckpt_path in ckpt_paths:
+            if ckpt_path.exists():
+                try:
+                    state = torch.load(ckpt_path, map_location=device, weights_only=True)
+                    # Handle both raw state_dict and wrapped checkpoint formats
+                    if isinstance(state, dict) and "model_state_dict" in state:
+                        state = state["model_state_dict"]
+                    model.load_state_dict(state, strict=True)
+                    print(f"  [seed={seed}] Loaded VAE checkpoint: {ckpt_path}")
+                    return model
+                except Exception as e:
+                    print(f"  [seed={seed}] Checkpoint {ckpt_path} failed ({e}), trying next.")
+
+    # Train from scratch with proper VAE training loop
+    print(f"  [seed={seed}] Training VAE from scratch (epochs={epochs}, bn={DEFAULT_BN})...")
+    t0 = time.time()
+    _train_vae_scratch(model, data["train_x"], data["val_normal_x"],
+                       device, epochs, beta=0.5)
+    print(f"  [seed={seed}] VAE training done in {time.time()-t0:.0f}s")
+    return model
+
+
+def _train_vae_scratch(model: VAE, train_x: torch.Tensor, val_x: torch.Tensor,
+                        device: torch.device, epochs: int, beta: float = 0.5,
+                        patience: int = 25) -> None:
+    """Train VAE from scratch, tracking best_val_mse (not total loss).
+
+    Mirrors VAETrainer logic: KL annealing over first 20 epochs,
+    CosineAnnealingWarmRestarts, grad clip 1.0, early stopping on val MSE.
+    """
+    train_loader = DataLoader(TensorDataset(train_x), batch_size=64, shuffle=True)
+    val_loader = DataLoader(TensorDataset(val_x), batch_size=64)
+    opt = Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    sched = CosineAnnealingWarmRestarts(opt, T_0=20, T_mult=2, eta_min=1e-6)
+    best_val_mse, no_imp, best_state = float("inf"), 0, None
+    kl_annealing_epochs = 20
+
+    for epoch in range(1, epochs + 1):
+        kl_weight = min(1.0, epoch / kl_annealing_epochs)
+        model.train()
+        for batch_idx, (x,) in enumerate(train_loader):
+            x = x.to(device); opt.zero_grad()
+            output = model(x)
+            total, mse, kl = model.compute_loss(x, output, beta=beta, kl_weight=kl_weight)
+            total.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            sched.step(epoch + batch_idx / max(len(train_loader), 1))
+
+        # Validate on MSE only (consistent with VAETrainer checkpointing logic)
+        model.eval(); val_mses = []
+        with torch.no_grad():
+            for (x,) in val_loader:
+                x = x.to(device)
+                output = model(x)
+                val_mses.append(F.mse_loss(output.x_hat, x).item())
+        val_mse = float(np.mean(val_mses))
+
+        if val_mse < best_val_mse - 1e-6:
+            best_val_mse, no_imp = val_mse, 0
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        else:
+            no_imp += 1
+            if no_imp >= patience:
+                print(f"    Early stop at epoch {epoch} (val_mse={val_mse:.6f})")
+                break
+
+    if best_state:
+        model.load_state_dict(best_state)
+
+
 # ── Main ──
 
 MODEL_CONFIGS = {
-    "VAE":       lambda: VAENet(VAEConfig(latent_dim=DEFAULT_BN)),
+    "VAE":       None,          # handled separately via load_vae()
     "ConvAE":    lambda: ConvAENet(bottleneck=DEFAULT_BN),
     "VanillaAE": lambda: VanillaAENet(bottleneck=DEFAULT_BN),
-}
-
-CHECKPOINT_MAP = {
-    "VAE":       "checkpoints/vae_beta0.5_best.pt",
-    "ConvAE":    "checkpoints/conv_ae_seed42.pt",
-    "VanillaAE": "checkpoints/vanilla_ae_seed42.pt",
 }
 
 
@@ -309,26 +404,46 @@ def run(args):
     for model_name in models_to_run:
         print(f"\n{'='*70}\nModel: {model_name}\n{'='*70}")
         seed_results = []
-        for seed in seeds:
-            set_seed(seed); model = MODEL_CONFIGS[model_name]().to(device)
-            ckpt_path = Path(CHECKPOINT_MAP.get(model_name, ""))
-            loaded = False
-            if not args.train_first and ckpt_path.exists():
-                try:
-                    state = torch.load(ckpt_path, map_location=device)
-                    model.load_state_dict(state, strict=False)
-                    print(f"  [seed={seed}] Loaded checkpoint: {ckpt_path}"); loaded = True
-                except Exception as e:
-                    print(f"  [seed={seed}] Checkpoint load failed ({e}), training.")
-            if not loaded:
-                print(f"  [seed={seed}] Training {model_name} (epochs={epochs})...")
-                t0 = time.time()
-                train_generic(model, data["train_x"], data["val_normal_x"], device, epochs)
-                print(f"  [seed={seed}] Done in {time.time()-t0:.0f}s")
 
-            scores = get_scores(model, test_x, device)
-            try: overall_auroc = float(roc_auc_score(test_y, scores)); overall_auprc = float(average_precision_score(test_y, scores))
-            except: overall_auroc = overall_auprc = float("nan")
+        for seed in seeds:
+            set_seed(seed)
+
+            # ── VAE: proper pipeline ──
+            if model_name == "VAE":
+                model = load_vae(seed, device, args.train_first, data, epochs)
+                model.eval()
+                scores = get_scores_vae(model, test_x, device,
+                                        n_mc_samples=10)
+
+            # ── ConvAE / VanillaAE: inline pipeline (unchanged) ──
+            else:
+                model = MODEL_CONFIGS[model_name]().to(device)
+                ckpt_pattern = CHECKPOINT_MAP[model_name]
+                ckpt_path = Path(ckpt_pattern.format(seed=seed))
+                loaded = False
+                if not args.train_first and ckpt_path.exists():
+                    try:
+                        state = torch.load(ckpt_path, map_location=device, weights_only=True)
+                        model.load_state_dict(state, strict=False)
+                        print(f"  [seed={seed}] Loaded checkpoint: {ckpt_path}")
+                        loaded = True
+                    except Exception as e:
+                        print(f"  [seed={seed}] Checkpoint load failed ({e}), training.")
+                if not loaded:
+                    print(f"  [seed={seed}] Training {model_name} (epochs={epochs})...")
+                    t0 = time.time()
+                    train_generic(model, data["train_x"], data["val_normal_x"],
+                                  device, epochs)
+                    print(f"  [seed={seed}] Done in {time.time()-t0:.0f}s")
+                model.eval()
+                scores = get_scores_generic(model, test_x, device)
+
+            # ── Evaluate ──
+            try:
+                overall_auroc = float(roc_auc_score(test_y, scores))
+                overall_auprc = float(average_precision_score(test_y, scores))
+            except:
+                overall_auroc = overall_auprc = float("nan")
             print(f"  [seed={seed}] Overall AUROC={overall_auroc:.4f}  AUPRC={overall_auprc:.4f}")
 
             pc = per_class_auroc(scores, test_y, test_sub_np) if test_sub_np is not None else {}
@@ -336,28 +451,39 @@ def run(args):
                 a = f"{res['auroc']:.4f}" if not np.isnan(res['auroc']) else "N/A"
                 print(f"    {cn:6s}: AUROC={a}  n={res['n_pos']}")
 
-            row = {"model": model_name, "seed": seed, "overall_auroc": overall_auroc, "overall_auprc": overall_auprc}
+            row = {"model": model_name, "seed": seed,
+                   "overall_auroc": overall_auroc, "overall_auprc": overall_auprc}
             for cn in ["MI", "STTC", "HYP", "CD"]:
-                res = pc.get(cn, {}); row[f"{cn}_auroc"] = res.get("auroc", ""); row[f"{cn}_auprc"] = res.get("auprc", ""); row[f"{cn}_n"] = res.get("n_pos", "")
-            append_csv(out, row); seed_results.append(overall_auroc)
+                res = pc.get(cn, {})
+                row[f"{cn}_auroc"] = res.get("auroc", "")
+                row[f"{cn}_auprc"] = res.get("auprc", "")
+                row[f"{cn}_n"]     = res.get("n_pos", "")
+            append_csv(out, row)
+            seed_results.append(overall_auroc)
 
         mean_a = float(np.mean([r for r in seed_results if not np.isnan(r)]))
-        std_a = float(np.std([r for r in seed_results if not np.isnan(r)]))
+        std_a  = float(np.std( [r for r in seed_results if not np.isnan(r)]))
         print(f"\n  {model_name} overall AUROC: {mean_a:.4f} ± {std_a:.4f}")
 
     print(f"\n✓ Results saved to {out}")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Sprint 3 — Per-class breakdown (Person C)")
+    parser = argparse.ArgumentParser(
+        description="Sprint 3 — Per-class breakdown (Person C)"
+    )
     parser.add_argument("--data_dir", default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--quick", action="store_true")
-    parser.add_argument("--train_first", action="store_true")
-    parser.add_argument("--models", nargs="+", choices=list(MODEL_CONFIGS.keys()))
+    parser.add_argument("--train_first", action="store_true",
+                        help="Force retrain all models, ignore checkpoints")
+    parser.add_argument("--models", nargs="+",
+                        choices=list(MODEL_CONFIGS.keys()))
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
     run(args)
+
 
 if __name__ == "__main__":
     main()
