@@ -180,6 +180,15 @@ You should see:
 All checks passed!
 ```
 
+## Step 5: Fix Normalization (CRITICAL)
+
+To ensure more stable training and faster convergence of AE/VAE models, you must convert the initial Min-max normalization (0,1) to Z-score normalization (μ=0,σ=1):
+
+```bash
+python fix_normalization.py --data_dir data/ptb-xl --output_dir data/ptb-xl-zscore
+```
+Note: From this step onwards, use data/ptb-xl-zscore as your default data directory for all training and evaluation scripts.
+
 ---
 ## Sprint 2: Federated AE Updates (Raheeb)
 
