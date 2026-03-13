@@ -122,6 +122,10 @@ def train_single(model_name, bottleneck, loaders, seed, device,
             best_val_mse = avg_val_mse
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
             no_improve = 0
+            os.makedirs("checkpoints", exist_ok=True)
+            checkpoint_name = f"{model_name}_bn{bottleneck}_seed{seed}.pt"
+            checkpoint_path = os.path.join("checkpoints", checkpoint_name)
+            torch.save(best_state, checkpoint_path)
         else:
             no_improve += 1
 
