@@ -161,6 +161,8 @@ def load_data(data_dir: str, quick: bool = False) -> dict:
     test_y = torch.from_numpy(np.load(d / "test_labels.npy")).long()
     sub_path = d / "test_subclass_labels.npy"
     test_sub = torch.from_numpy(np.load(sub_path)).long() if sub_path.exists() else None
+    if test_sub is not None and len(test_sub) != len(test_y):
+        test_sub = test_sub[:len(test_y)]
     if test_sub is None:
         print(f"  WARNING: test_subclass_labels.npy not found.")
         print(f"  Run: python scripts/extract_subclass_labels.py --data_dir {data_dir}")

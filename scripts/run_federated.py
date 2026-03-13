@@ -98,7 +98,7 @@ def local_train(model, loaders, epochs, model_type, beta=0.5, lr=0.001):
         kl_weight = min(1.0, (epoch + 1) / max(epochs, 1)) if is_vae else 1.0
 
         for batch in loaders["train"]:
-            x = batch[0]
+            x = batch[0].to(next(model.parameters()).device)            
             optimizer.zero_grad()
             output = model(x)
 
@@ -234,8 +234,7 @@ def run_flower_simulation(model_type, seed, global_splits, num_clients,
         client = ECGClient(
             client_id=str(pid),
             model_type=model_type,
-            data_splits=client_splits[pid],
-            batch_size=32,
+            alpha=beta if model_type == "vae" else 0.5
         )
         return client.to_client()
 
