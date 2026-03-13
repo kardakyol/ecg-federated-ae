@@ -27,6 +27,7 @@ from utils.reproducibility import SEEDS, set_seed, get_device, setup_logging
 from utils.csv_logger import ResultLogger
 from evaluation.metrics import compute_metrics, aggregate_seeds, format_aggregated
 
+from configs.vae_config import VAEArchitectureConfig
 from models.vanilla_ae import VanillaAE
 from models.conv_ae import ConvAE
 from models.vae import VAE
@@ -35,10 +36,9 @@ from models.vae import VAE
 logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
-    "vanilla_ae": VanillaAE,
-    "conv_ae": ConvAE,
-    "vae": VAE,
-}
+    "vanilla_ae": lambda bottleneck: VanillaAE(bottleneck=bottleneck),
+    "conv_ae":    lambda bottleneck: ConvAE(bottleneck=bottleneck),
+"vae":        lambda bottleneck: VAE(config=VAEArchitectureConfig(latent_dim=bottleneck))}
 
 # Sprint 3: added bn=8 to ablation range
 BOTTLENECK_SIZES = [8, 16, 32, 64, 128]
