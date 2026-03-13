@@ -204,6 +204,21 @@ Run the following commands to verify the pipeline across all models and $\alpha$
 * **Plots:** outputs/figures/ for the convergence PNGs.
 * **CSV:** outputs/convergence_results.csv for the populated metrics
 ---
+## Sprint 3 Full 6 Config Ablation Table (Raheeb)
+
+### How to test/reproduce the test:
+
+| #  | FL | DP         | Quantisation | Commands to run |
+|----|----|-----------|-------------|------------------------|
+| 2  | ✓  | ✗         | ✗           | `python fl/flower_server.py --model [vanilla/conv/vae] --alpha [0.1/0.5/1.0] --epochs 5 --rounds 50 --clients 10 --epsilon 'inf' --precision_type "fp32" --seed [42/123/456]` |
+| 3  | ✓  | ✓ (ε=8)  | ✗           | `python fl/flower_server.py --model [vanilla/conv/vae] --alpha [0.1/0.5/1.0] --epochs 5 --rounds 50 --clients 10 --epsilon 8 --precision_type "fp32" --seed [42/123/456]` |
+| 4  | ✓  | ✗         | ✓ (INT8)    | `python fl/flower_server.py --model [vanilla/conv/vae] --alpha [0.1/0.5/1.0] --epochs 5 --rounds 50 --clients 10 --epsilon 'inf' --precision_type "int8" --seed [42/123/456]` |
+| 5  | ✓  | ✓ (ε=4)  | ✓ (INT8)    | `python fl/flower_server.py --model [vanilla/conv/vae] --alpha [0.1/0.5/1.0] --epochs 5 --rounds 50 --clients 10 --epsilon 4 --precision_type "int8" --seed [42/123/456]` |
+| 6  | ✓  | ✓ (ε=1)  | ✗           | `python fl/flower_server.py --model [vanilla/conv/vae] --alpha [0.1/0.5/1.0] --epochs 5 --rounds 50 --clients 10 --epsilon 1 --precision_type "fp32" --seed [42/123/456]` |
+| 7  | ✓  | ✓ (ε=1)  | ✓ (INT8)    | `python fl/flower_server.py --model [vanilla/conv/vae] --alpha [0.1/0.5/1.0] --epochs 5 --rounds 50 --clients 10 --epsilon 1 --precision_type "int8" --seed [42/123/456]` |
+
+* **Ablation Result:** Saved in the directory `outputs/ablation_results.csv`
+---
 
 ## Data Contract (Ghouse → Everyone)
 
