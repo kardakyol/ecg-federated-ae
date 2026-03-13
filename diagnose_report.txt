@@ -1,0 +1,66 @@
+Data directory: data/ptb-xl-clean
+Exists: True
+Total files: 11
+.npy files: 11
+  norm_means.npy  (0.0 MB)
+  norm_stds.npy  (0.0 MB)
+  test_labels.npy  (0.0 MB)
+  test_signals.npy  (93.8 MB)
+  test_subclass_labels.npy  (0.0 MB)
+  train_labels.npy  (0.1 MB)
+  train_signals.npy  (330.7 MB)
+  train_subclass_labels.npy  (0.1 MB)
+  val_labels.npy  (0.0 MB)
+  val_signals.npy  (93.1 MB)
+  val_subclass_labels.npy  (0.0 MB)
+Found pattern 0: ['train_signals.npy', 'train_labels.npy', 'val_signals.npy', 'val_labels.npy', 'test_signals.npy', 'test_labels.npy']
+  train_X   : shape=(7224, 12, 1000)      dtype=float32
+  train_y   : shape=(7224,)               dtype=int64
+  val_X     : shape=(2034, 12, 1000)      dtype=float32
+  val_y     : shape=(2034,)               dtype=int64
+  test_X    : shape=(2050, 12, 1000)      dtype=float32
+  test_y    : shape=(2050,)               dtype=int64
+
+  Channels-first (B, 12, T): True
+  Channels-last  (B, T, 12): False
+  Global min:  -83.509506
+  Global max:  44.238235
+  Global mean: -0.000000
+  Global std:  1.000000
+
+  Per-lead statistics:
+    Lead  0: mean=+0.0000  std=1.0000  min=-36.4813  max=21.3132
+    Lead  1: mean=+0.0000  std=1.0000  min=-13.0810  max=19.1473
+    Lead  2: mean=+0.0000  std=1.0000  min=-21.2027  max=42.7484
+    Lead  3: mean=-0.0000  std=1.0000  min=-18.7967  max=19.5089
+    Lead  4: mean=-0.0000  std=1.0000  min=-48.3956  max=25.9538
+    Lead  5: mean=-0.0000  std=1.0000  min=-16.1525  max=22.1606
+    Lead  6: mean=+0.0000  std=1.0000  min=-83.5095  max=31.5612
+    Lead  7: mean=-0.0000  std=1.0000  min=-26.7932  max=33.8646
+    Lead  8: mean=+0.0000  std=1.0000  min=-44.1382  max=22.3887
+    Lead  9: mean=+0.0000  std=1.0000  min=-36.1813  max=18.6597
+    Lead 10: mean=+0.0000  std=1.0000  min=-55.7081  max=42.5717
+    Lead 11: mean=+0.0000  std=1.0000  min=-43.6320  max=44.2382
+
+  ISSUE CHECKS:
+  ✓ Z-score normalization looks OK
+  ✓ dtype is float32
+  ✓ No NaN/Inf values
+  train: total=7224
+    label=0: 7224 (100.0%)
+  val  : total=2034
+    label=0: 905 (44.5%)
+    label=1: 1129 (55.5%)
+  test : total=2050
+    label=0: 909 (44.3%)
+    label=1: 1141 (55.7%)
+  ⚠️  Labels have 1 unique values — expected binary (0/1)
+     Unique values: [0]
+  ✓ No overlap detected (checked 100 test samples)
+  Cannot compute — need both normal and abnormal samples in train
+Review all ⚠️ warnings above. Common fixes:
+  1. If not z-score normalized → fix preprocessing
+  2. If channels-last → transpose to channels-first
+  3. If dtype is int → cast to float32
+  4. If very low SNR → bottleneck must be tight (8-16)
+  5. If label distribution is wrong → check label extraction

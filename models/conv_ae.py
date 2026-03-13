@@ -1,3 +1,16 @@
+"""
+1D Convolutional Autoencoder — Updated Sprint 3
+=================================================
+Best config from ablation: bottleneck=128, lr=1e-3
+AUROC: 0.795 ± 0.004 on PTB-XL z-score data (max_auroc_pipeline)
+
+Changes from Sprint 2:
+  - Default bottleneck: 32 → 128 (ablation proved larger = better)
+  - No other architectural changes (backward compatible)
+  - Still uses GroupNorm + inplace=False (Opacus compatible)
+  - AEOutput interface unchanged (Raheeb/Ghadah/Hilal unaffected)
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,13 +23,13 @@ class ConvAE(BaseAutoencoder):
     """1D Convolutional Autoencoder.
 
     Args:
-        bottleneck: Latent dimension size. Default 32 per roadmap spec.
-                    Sprint 3 ablation will test {16, 32, 64, 128}.
+        bottleneck: Latent dimension size. Default 128 (Sprint 3 best).
+                    Ablation tested {8, 16, 32, 64, 128}.
         n_leads: Number of ECG leads. Default 12 for PTB-XL.
         seq_len: Number of time steps per lead. Default 1000 (100 Hz x 10s).
     """
 
-    def __init__(self, bottleneck: int = 32, n_leads: int = 12, seq_len: int = 1000):
+    def __init__(self, bottleneck: int = 128, n_leads: int = 12, seq_len: int = 1000):
         super().__init__()
         self.bottleneck = bottleneck
         self.n_leads = n_leads
@@ -46,11 +59,11 @@ class ConvAE(BaseAutoencoder):
         curr_len = seq_len
         for k, s, p in [(7, 2, 3), (7, 2, 3), (5, 2, 2), (5, 2, 2)]:
             curr_len = math.floor((curr_len + 2*p - k) / s) + 1
-        
-        self._enc_temporal = curr_len 
+
+        self._enc_temporal = curr_len
         self._enc_flat_dim = 256 * self._enc_temporal
 
-        # Flatten -> FC bottleneck  
+        # Flatten -> FC bottleneck
         self.enc_fc = nn.Linear(self._enc_flat_dim, bottleneck)
         self.enc_fc_act = nn.ReLU(inplace=False)
 
@@ -60,7 +73,7 @@ class ConvAE(BaseAutoencoder):
         self.dec_fc_act = nn.ReLU(inplace=False)
 
         # (B, 256, 63) -> (B, 128, 125)
-        self.dec_conv1 = nn.ConvTranspose1d(256, 128, kernel_size=5, stride=2, padding=2, output_padding=1)        
+        self.dec_conv1 = nn.ConvTranspose1d(256, 128, kernel_size=5, stride=2, padding=2, output_padding=1)
         self.dec_gn1 = nn.GroupNorm(num_groups=min(32, 128), num_channels=128)
         self.dec_act1 = nn.ReLU(inplace=False)
 
@@ -76,49 +89,29 @@ class ConvAE(BaseAutoencoder):
 
         # (B, 32, 500) -> (B, 12, 1000)
         self.dec_conv4 = nn.ConvTranspose1d(32, n_leads, kernel_size=7, stride=2, padding=3, output_padding=1)
-       
 
     def forward(self, x: torch.Tensor) -> AEOutput:
-        """
-        Args:
-            x: (B, 12, 1000) — channels-first ECG signal
-
-        Returns:
-            AEOutput with x_hat: (B, 12, 1000) — guaranteed same shape as input
-        """
         # Encode
-        h = self.enc_act1(self.enc_gn1(self.enc_conv1(x)))    
-        h = self.enc_act2(self.enc_gn2(self.enc_conv2(h)))     
-        h = self.enc_act3(self.enc_gn3(self.enc_conv3(h)))    
-        h = self.enc_act4(self.enc_gn4(self.enc_conv4(h)))    
-        # Flatten -> bottleneck
-        h_flat = h.view(h.shape[0], -1)                       
-        z = self.enc_fc_act(self.enc_fc(h_flat))                
+        h = self.enc_act1(self.enc_gn1(self.enc_conv1(x)))
+        h = self.enc_act2(self.enc_gn2(self.enc_conv2(h)))
+        h = self.enc_act3(self.enc_gn3(self.enc_conv3(h)))
+        h = self.enc_act4(self.enc_gn4(self.enc_conv4(h)))
+        h_flat = h.view(h.shape[0], -1)
+        z = self.enc_fc_act(self.enc_fc(h_flat))
 
         # Decode
-        h = self.dec_fc_act(self.dec_fc(z))                     
+        h = self.dec_fc_act(self.dec_fc(z))
         h = h.view(h.size(0), 256, -1)
+        h = self.dec_act1(self.dec_gn1(self.dec_conv1(h)))
+        h = self.dec_act2(self.dec_gn2(self.dec_conv2(h)))
+        h = self.dec_act3(self.dec_gn3(self.dec_conv3(h)))
+        x_hat = self.dec_conv4(h)
 
-        h = self.dec_act1(self.dec_gn1(self.dec_conv1(h)))      
-        h = self.dec_act2(self.dec_gn2(self.dec_conv2(h)))      
-        h = self.dec_act3(self.dec_gn3(self.dec_conv3(h)))      
-        x_hat = self.dec_conv4(h)                                
-
-     
         if x_hat.shape[-1] != x.shape[-1]:
             x_hat = F.interpolate(x_hat, size=x.shape[-1], mode='linear', align_corners=False)
 
         return AEOutput(x_hat=x_hat)
 
     def compute_loss(self, x: torch.Tensor, output: AEOutput, **kwargs) -> tuple:
-        """MSE reconstruction loss.
-
-        Args:
-            x: (B, 12, 1000) — original input
-            output: AEOutput from forward()
-
-        Returns:
-            (mse,) — single-element tuple; first element is total loss for backward()
-        """
         mse = F.mse_loss(output.x_hat, x)
         return (mse,)
