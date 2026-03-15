@@ -174,15 +174,12 @@ class ECGClient(fl.client.NumPyClient):
             if platform.machine() in ['armv7l', 'aarch64']:
                 torch.backends.quantized.engine = 'qnnpack'
                 print("[INFO] Using QNNPACK engine for Raspberry PI")
-            
             # Applying Quantization
             from quantisation.ptq import apply_dynamic_quantisation
             eval_model = apply_dynamic_quantisation(target_model.to("cpu"))
             eval_device = torch.device("cpu")
         else:
             eval_model = target_model
-        
-        costs = compute_all_costs(eval_model, device=self.device)
 
         # ── Inference loop ──────────────────────────────────────────────
         eval_model.eval()
@@ -191,8 +188,9 @@ class ECGClient(fl.client.NumPyClient):
             torch.cuda.reset_peak_memory_stats(device=eval_device)
         all_scores = []
         all_labels = []
+        costs = compute_all_costs(eval_model, device=self.device)
         with torch.no_grad():
-            for batch in self.loaders["val"]:
+            for batch in self.loaders["test"]:
                 x = batch[0].to(eval_device)
                 y = batch[1] if len(batch) > 1 else torch.zeros(x.shape[0])
                 output = eval_model(x)
@@ -206,15 +204,19 @@ class ECGClient(fl.client.NumPyClient):
         threshold = np.percentile(scores_arr, 95)
         
         if len(np.unique(labels_arr)) < 2:
-            return float(np.mean(scores_arr)), len(self.loaders["val"].dataset), {
-                "val_loss": float(np.mean(scores_arr)),
-                "epsilon": str(config.get("epsilon", "inf")),
-            }
+            # return float(np.mean(scores_arr)), len(self.loaders["val"].dataset), {
+            #     "val_loss": float(np.mean(scores_arr)),
+            #     "epsilon": str(config.get("epsilon", "inf")),
+            # }
+            return 0.0, len(self.loaders["test"].dataset), {"status": "no_labels"}
 
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
         result_dict = metrics.to_dict()
+
+        # ── System Tracking ───────────────────────────────────────────────────
         result_dict.update(costs)
         result_dict["model_size_mb"] = get_model_size_mb(eval_model)
+        
         # System RAM (For Raspberry Pi)
         process = psutil.Process(os.getpid())
         peak_mem=process.memory_info().rss
@@ -228,6 +230,7 @@ class ECGClient(fl.client.NumPyClient):
             "training_time_s": float(self.last_train_time),
             "epsilon": str(config.get("epsilon", "N/A")),
             "precision_type": config.get("precision_type", "fp32"),
+            "evaluation_type": "personalized_1_epoch"
         })
         if precision_type == "int8":
             del eval_model
