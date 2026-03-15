@@ -346,11 +346,6 @@ def main():
             train_model(model, loaders, device, epochs)
             elapsed = time.time() - t0
 
-            os.makedirs("checkpoints", exist_ok=True)
-            checkpoint_path = f"checkpoints/VAE_bn{bn}_seed{seed}.pt"
-            torch.save(model.state_dict(), checkpoint_path)
-            print(f"  [SAVED] Model saved to {checkpoint_path}")
-
             m = evaluate_model(model, loaders, device)
             aurocs.append(m["auroc"])
 

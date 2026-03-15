@@ -27,7 +27,6 @@ from utils.reproducibility import SEEDS, set_seed, get_device, setup_logging
 from utils.csv_logger import ResultLogger
 from evaluation.metrics import compute_metrics, aggregate_seeds, format_aggregated
 
-from configs.vae_config import VAEArchitectureConfig
 from models.vanilla_ae import VanillaAE
 from models.conv_ae import ConvAE
 from models.vae import VAE
@@ -36,9 +35,10 @@ from models.vae import VAE
 logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
-    "vanilla_ae": lambda bottleneck: VanillaAE(bottleneck=bottleneck),
-    "conv_ae":    lambda bottleneck: ConvAE(bottleneck=bottleneck),
-"vae":        lambda bottleneck: VAE(config=VAEArchitectureConfig(latent_dim=bottleneck))}
+    "vanilla_ae": VanillaAE,
+    "conv_ae": ConvAE,
+    "vae": VAE,
+}
 
 # Sprint 3: added bn=8 to ablation range
 BOTTLENECK_SIZES = [8, 16, 32, 64, 128]
@@ -122,10 +122,6 @@ def train_single(model_name, bottleneck, loaders, seed, device,
             best_val_mse = avg_val_mse
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
             no_improve = 0
-            os.makedirs("checkpoints", exist_ok=True)
-            checkpoint_name = f"{model_name}_bn{bottleneck}_seed{seed}.pt"
-            checkpoint_path = os.path.join("checkpoints", checkpoint_name)
-            torch.save(best_state, checkpoint_path)
         else:
             no_improve += 1
 
