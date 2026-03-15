@@ -7,6 +7,8 @@ import flwr as fl
 import torch
 import numpy as np 
 import time
+import platform
+import gc
 from pathlib import Path
 from torch.utils.data import Subset
 from models.base import BaseAutoencoder, AEOutput
@@ -16,7 +18,15 @@ from evaluation.compute_cost import compute_all_costs
 from fl.model_factory import get_model
 from privacy.dp_sgd import make_private, get_epsilon
 from opacus.accountants.utils import get_noise_multiplier
+import psutil
+import os
+import io
 
+def get_model_size_mb(model):
+    """Accurately measures model size including quantized PackedParams."""
+    buffer = io.BytesIO()
+    torch.save(model.state_dict(), buffer)
+    return buffer.getbuffer().nbytes / (1024 * 1024)
 
 class ECGClient(fl.client.NumPyClient):
     def __init__(self, client_id: str, model_type: str = "vanilla", alpha: float = 0.5):
@@ -75,40 +85,31 @@ class ECGClient(fl.client.NumPyClient):
         self.privacy_engine = None
 
         #──── DP Configuration ───────────────────────
-        target_epsilon = config.get("epsilon", None)
+        target_epsilon = config.get("epsilon", float('inf'))
         noise_multiplier = 0.0
 
-        if target_epsilon is not None:
-            target_epsilon = float(target_epsilon)
-
-        if target_epsilon is not None and target_epsilon < float('inf'):
+        if target_epsilon < float('inf'):
             dataset_size = len(train_loader.dataset)
             sample_rate=train_loader.batch_size / dataset_size if dataset_size > 0 else 1.0
 
             # Calculate the noise required to reach target_epsilon
             # sample_rate = batch_size / total_samples
             try:
-                if sample_rate >= 1.0:
-                    raise ValueError("Sample rate >= 1.0 is mathematically impossible for DP.")
                 noise_multiplier = get_noise_multiplier(
                     target_epsilon=target_epsilon,
                     target_delta=1e-5,
                     sample_rate=sample_rate,
                     epochs=config.get("local_epochs", 1)
                 )
-            except (ValueError, ZeroDivisionError, OverflowError):
-                # FALLBACK: If the specific epsilon is impossible for this small dataset,
-                # we use a high constant noise to allow the simulation to continue.
-                print(f"[!] Client {self.client_id}: DP Math failed. Falling back to safe noise.")
-                noise_multiplier = 2.0 if target_epsilon <= 1.0 else 1.0
-            
-            self.model, optimizer, train_loader, self.privacy_engine = make_private(
-                model=self.model,
-                optimizer=optimizer,
-                dataloader=train_loader,
-                noise_multiplier=noise_multiplier,
-                max_grad_norm=1.0
-            )
+                self.model, optimizer, train_loader, self.privacy_engine = make_private(
+                    model=self.model,
+                    optimizer=optimizer,
+                    dataloader=train_loader,
+                    noise_multiplier=noise_multiplier,
+                    max_grad_norm=1.0
+                )
+            except Exception as e:
+                print(f"[!] DP Math error: {e}. Falling back to non-private for this client.")
 
         # Baseline: No DP wrapping
         self.model.train()
@@ -134,6 +135,9 @@ class ECGClient(fl.client.NumPyClient):
         # Calculate final epsilon
         actual_eps = get_epsilon(self.privacy_engine, delta=1e-5) if self.privacy_engine else float('inf')
 
+        torch.cuda.empty_cache()
+        gc.collect()
+
         return self.get_parameters(config={}), len(self.loaders["train"].dataset), {
             "train_loss": float(avg_loss),
             "training_time_s": float(self.last_train_time),
@@ -147,10 +151,11 @@ class ECGClient(fl.client.NumPyClient):
         
         self.set_parameters(parameters)
         target_model = self.model._module if hasattr(self.model, "_module") else self.model
+        
         # ── Post Global fine tuning ──────────────────────────────────────────────
         self.model.train()
-        ft_optimizer=torch.optim.Adam(self.model.parameters(), lr=0.0001)
-        fine_tune_epochs = 5
+        ft_optimizer=torch.optim.Adam(self.model.parameters(), lr=1e-5)
+        fine_tune_epochs = 1
 
         for _ in range(fine_tune_epochs):
             for batch in self.loaders["train"]:
@@ -160,34 +165,41 @@ class ECGClient(fl.client.NumPyClient):
                 loss, *_ = target_model.compute_loss(x, output)
                 loss.backward()
                 ft_optimizer.step()
-        
+
         # ── Model Quantization Phase ──────────────────────────────────────────────
         precision_type = config.get("precision_type", "fp32")
         eval_device = self.device
         if precision_type == "int8":
+            # Setting ARM optimization engine for running on Raspeberry PI
+            if platform.machine() in ['armv7l', 'aarch64']:
+                torch.backends.quantized.engine = 'qnnpack'
+                print("[INFO] Using QNNPACK engine for Raspberry PI")
+            
+            # Applying Quantization
             from quantisation.ptq import apply_dynamic_quantisation
-            self.model = self.model.to("cpu")
-            self.model = apply_dynamic_quantisation(self.model)
+            eval_model = apply_dynamic_quantisation(target_model.to("cpu"))
             eval_device = torch.device("cpu")
-            target_model=self.model
+        else:
+            eval_model = target_model
+        
+        costs = compute_all_costs(eval_model, device=self.device)
 
         # ── Inference loop ──────────────────────────────────────────────
-        self.model.eval()
+        eval_model.eval()
+        # Reset CUDA stats at the start of evaluation to get a "per-round" peak
+        if torch.cuda.is_available() and eval_device.type == 'cuda':
+            torch.cuda.reset_peak_memory_stats(device=eval_device)
         all_scores = []
         all_labels = []
-        start_inf = time.time()
         with torch.no_grad():
             for batch in self.loaders["val"]:
                 x = batch[0].to(eval_device)
                 y = batch[1] if len(batch) > 1 else torch.zeros(x.shape[0])
-                output = self.model(x)
+                output = eval_model(x)
                 x_hat = output.x_hat if hasattr(output, 'x_hat') else output[0]
                 score = torch.mean((x_hat.to(eval_device) - x)**2, dim=(1,2))
                 all_scores.extend(score.cpu().numpy())
                 all_labels.extend(y.cpu().numpy())
-        
-        total_inf_time = (time.time() - start_inf) * 1000
-        avg_latency = total_inf_time / max(len(self.loaders["val"].dataset), 1)
 
         scores_arr = np.concatenate([np.atleast_1d(s) for s in all_scores])
         labels_arr = np.concatenate([np.atleast_1d(l) for l in all_labels])
@@ -200,17 +212,45 @@ class ECGClient(fl.client.NumPyClient):
             }
 
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
-        costs = compute_all_costs(target_model, device=eval_device)
         result_dict = metrics.to_dict()
         result_dict.update(costs)
+        result_dict["model_size_mb"] = get_model_size_mb(eval_model)
+        # System RAM (For Raspberry Pi)
+        process = psutil.Process(os.getpid())
+        peak_mem=process.memory_info().rss
+        result_dict["peak_memory_mb"] = float(round(peak_mem / (1024**2), 2))
+        
+        # For GPU VRAM (For Simulation run)
+        if torch.cuda.is_available() and eval_device.type == 'cuda':
+            result_dict["peak_memory_mb"] = float(round(torch.cuda.max_memory_allocated(device=eval_device) / (1024**2), 2))
+        
         result_dict.update({
             "training_time_s": float(self.last_train_time),
             "epsilon": str(config.get("epsilon", "N/A")),
             "precision_type": config.get("precision_type", "fp32"),
         })
+        if precision_type == "int8":
+            del eval_model
 
-        # record memory usage for DP efficiency analysis
-        if torch.cuda.is_available() and eval_device.type == 'cuda':
-            result_dict["peak_memory_mb"] = torch.cuda.max_memory_allocated() / (1024**2)
+        self.model.to(self.device)
+        gc.collect()
+        torch.cuda.empty_cache()
         
         return float(metrics.auroc), len(self.loaders["val"].dataset), result_dict
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Flower ECG Client")
+    parser.add_argument("--client_id", type=str, required=True)
+    parser.add_argument("--model_type", type=str, default="conv", choices=["vanilla", "conv", "vae"])
+    parser.add_argument("--server_address", type=str, default="localhost:8080",
+                        help="IP of the server (use default for laptop simulation)")
+
+    args = parser.parse_args()
+    # Start the client
+    fl.client.start_numpy_client(
+        server_address=args.server_address, 
+        client=ECGClient(client_id=args.client_id, model_type=args.model_type),
+        grpc_max_message_length=1024*1024*1024
+    )

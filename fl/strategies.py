@@ -17,6 +17,9 @@ def weighted_average(metrics: List[tuple[int, Metrics]]) -> Metrics:
     aggregated_metrics = {}
     total_examples = sum(num_examples for num_examples, _ in metrics)
 
+    if total_examples == 0:
+        return {}
+    
     for key in all_keys:
         # Check if the value is numeric before trying to average it
         val = metrics[0][1][key]
@@ -47,3 +50,20 @@ class Strategy(fl.server.strategy.FedAvg):
             on_fit_config_fn=on_fit_config_fn,
             on_evaluate_config_fn=on_evaluate_config_fn,
         )
+    # This prevents the ZeroDivisionError if all clients fail in a round
+    def aggregate_fit(self, server_round, results, failures):
+        """Aggregate fit results and handle cases where no clients succeed."""
+        if not results:
+            print(f"\n[!] WARNING: Round {server_round} failed. 0 clients succeeded, {len(failures)} failed.")
+            return None, {}
+        
+        # If we have results, proceed with the standard FedAvg aggregation
+        return super().aggregate_fit(server_round, results, failures)
+
+    def aggregate_evaluate(self, server_round, results, failures):
+        """Aggregate evaluation results and handle cases where no clients succeed."""
+        if not results:
+            print(f"\n[!] WARNING: Evaluation in round {server_round} failed.")
+            return None, {}
+            
+        return super().aggregate_evaluate(server_round, results, failures)
