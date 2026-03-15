@@ -144,20 +144,32 @@ def main():
         "seed": args.seed,
     }
 
-    # Strategy configuration for Sprint 2 (30% client participation 
+    # Strategy configuration for Sprint 2
+    if _NUM_CLIENTS <= 5:
+        fit_ratio = 1.0  # All clients participate
+    else:
+        fit_ratio = 5 / _NUM_CLIENTS  # 5 clients participate (Scalability test)
+
     strategy = Strategy(
-        fraction_fit=0.3,
-        fraction_evaluate=0.3,
-        min_fit_clients=3,
+        fraction_fit=fit_ratio,
+        fraction_evaluate=1.0 if _NUM_CLIENTS <=10 else 0.3,
+        min_fit_clients=2,
         min_available_clients=_NUM_CLIENTS,
         on_fit_config_fn=lambda _: config_dict,
         on_evaluate_config_fn=lambda _:config_dict,
     )
 
     has_gpu = torch.cuda.is_available()
+    active_clients_per_round = max(1, int(_NUM_CLIENTS * fit_ratio))
+
+    if has_gpu:
+        gpu_per_client = 0.8 / active_clients_per_round
+    else:
+        gpu_per_client = 0.0
+
     client_res = {
-        "num_cpus": 4,
-        "num_gpus": 0.5 if has_gpu else 0.0
+        "num_cpus": 1 if _NUM_CLIENTS > 10 else 2,
+        "num_gpus": gpu_per_client
     }
 
     logger.info(f"Starting FL simulation: {_NUM_ROUNDS} rounds...")
@@ -169,9 +181,11 @@ def main():
         strategy=strategy,
         client_resources=client_res,
         ray_init_args={
+            "num_cpus": 4,
             "num_gpus": 1 if has_gpu else 0,
             "include_dashboard": False,
-            "_temp_dir": "C:\\temp"
+            "object_store_memory": 2 * 1024 * 1024 * 1024,
+            "ignore_reinit_error": True,
         }
     )
     total_sim_time = time.perf_counter() - start_sim_time
@@ -201,10 +215,11 @@ def main():
     
 
         logger_csv = ResultLogger(
-            output_dir / "ablation_results.csv",
+            # output_dir / "ablation_results.csv",
+            output_dir / "dp_fl_results.csv",
             extra_columns=[
                 "epochs", "rounds", "alpha", 
-                "noise_multiplier", "time_per_round_s"
+                "noise_multiplier", "time_per_round_s", "clients"
             ]
         )
         if "precision" in final_metrics_summary:
@@ -217,12 +232,14 @@ def main():
             beta=_BETA,
             epochs=_LOCAL_EPOCHS,
             rounds=_NUM_ROUNDS,
+            clients=_NUM_CLIENTS,
             seed=args.seed,
             noise_multiplier=noise_multiplier,
             time_per_round_s=actual_time_per_round,
             **final_metrics_summary                                             
         )
-        logger.info(f"Ablation Results logged to: {output_dir}/ablation_results.csv")
+        #logger.info(f"Ablation Results logged to: {output_dir}/ablation_results.csv")
+        logger.info(f"Ablation Results logged to: {output_dir}/dp_fl_results.csv")
         
         auroc_key = next((k for k in dist_metrics.keys() if "auroc" in k.lower()), None)
         if auroc_key:
