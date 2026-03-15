@@ -45,6 +45,8 @@ def client_fn(cid: str):
     return ECGClient(
         client_id=cid,
         model_type=_MODEL_TYPE,
+        alpha=_ALPHA,
+        beta=_BETA,
     ).to_client()
 
 
