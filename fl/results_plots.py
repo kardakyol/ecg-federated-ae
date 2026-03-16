@@ -23,7 +23,7 @@ def plot_sprint4_results():
         plt.title("Training convergence curves (round vs loss per AE)", fontsize=14)
         plt.xlabel("Communication Round", fontsize=12)
         plt.ylabel("MSE (Log Scale)", fontsize=12)	
-        plt.yscale('log') # Loss curves look much better on a log scale
+        plt.yscale('log')
         plt.legend()
         plt.savefig("outputs/figures/convergence_curves.png", dpi=300)
         print("[DONE] convergence_curves.png saved.")
