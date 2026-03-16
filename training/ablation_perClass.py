@@ -12,7 +12,10 @@ import torch.optim as optim
 from utils.dataset import load_splits, create_dataloaders
 from utils.reproducibility import SEEDS, set_seed, get_device, setup_logging
 from utils.csv_logger import ResultLogger
-from evaluation.metrics import compute_metrics, aggregate_seeds, format_aggregated
+from evaluation.metrics import (
+    compute_metrics, aggregate_seeds, format_aggregated,
+    aggregate_perclass_seeds, format_perclass_table,
+)
 
 from models.vanilla_ae import VanillaAE
 from models.conv_ae import ConvAE
@@ -250,7 +253,10 @@ def main():
     csv_logger = ResultLogger("outputs/ablation_perClass.csv",
                               extra_columns=["bottleneck", "condition"])
 
+    all_model_perclass = {}
+
     for model_name in models_to_run:
+        seed_perclass = {}
         for seed in seeds:
             logger.info(f"\n{'='*60}")
             logger.info(f"{model_name} | seed={seed} | Per-class breakdown")
@@ -264,6 +270,7 @@ def main():
             )
 
             for condition, result in perclass_results.items():
+                seed_perclass.setdefault(condition, []).append(result)
                 csv_logger.log(
                     model=model_name,
                     setting="centralised",
@@ -286,19 +293,17 @@ def main():
                     training_time_s=train_time,
                 )
 
+        all_model_perclass[model_name] = seed_perclass
+
     logger.info(f"\n{'='*60}")
-    logger.info("PER-CLASS SUMMARY")
+    logger.info("PER-CLASS SUMMARY (all metrics, mean +/- std across seeds)")
     logger.info(f"{'='*60}")
 
-    import pandas as pd
-    df = pd.read_csv("outputs/ablation_perClass.csv")
-    perclass_df = df[df["condition"].notna() & (df["condition"] != "")]
-    if len(perclass_df) > 0:
-        summary = perclass_df.groupby(["model", "condition"]).agg(
-            auroc_mean=("auroc", "mean"), auroc_std=("auroc", "std"),
-            auprc_mean=("auprc", "mean"), auprc_std=("auprc", "std"),
-        ).round(4)
-        logger.info(f"\n{summary}")
+    for model_name, seed_perclass in all_model_perclass.items():
+        logger.info(f"\n--- {model_name} ---")
+        agg = aggregate_perclass_seeds(seed_perclass)
+        table = format_perclass_table(agg)
+        logger.info(f"\n{table}")
 
     logger.info(f"\nResults saved to outputs/ablation_perClass.csv")
 

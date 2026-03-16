@@ -189,6 +189,40 @@ python fix_normalization.py --data_dir data/ptb-xl --output_dir data/ptb-xl-zsco
 ```
 Note: From this step onwards, use data/ptb-xl-zscore as your default data directory for all training and evaluation scripts.
 
+### Step 6: Generate per-class subclass labels (required for per-class breakdown)
+
+The per-class evaluation (MI, STTC, HYP, CD breakdown) requires mapping each test sample back to its PTB-XL diagnostic superclass. This step reads the raw PTB-XL metadata and produces `.npy` label files.
+
+**Prerequisites:** You need the raw PTB-XL metadata files (`ptbxl_database.csv` and `scp_statements.csv`) from Step 1.
+
+```bash
+python scripts/extract_subclass_labels.py --raw_dir data/ptb-xl-raw --data_dir data/ptb-xl
+```
+
+**On Google Colab**, if you don't have the raw metadata locally, download it first:
+
+```bash
+wget -q https://physionet.org/files/ptb-xl/1.0.3/ptbxl_database.csv -P data/ptb-xl-raw/
+wget -q https://physionet.org/files/ptb-xl/1.0.3/scp_statements.csv -P data/ptb-xl-raw/
+
+python scripts/extract_subclass_labels.py --raw_dir data/ptb-xl-raw --data_dir data/ptb-xl
+```
+
+This produces:
+```
+data/ptb-xl/test_subclass_labels.npy    # (N_test,) int: {-1,0,1,2,3,4}
+data/ptb-xl/val_subclass_labels.npy     # (N_val,)
+data/ptb-xl/train_subclass_labels.npy   # (N_train,)
+data/ptb-xl/subclass_map.json           # {"NORM":0, "MI":1, "STTC":2, "HYP":3, "CD":4, "UNKNOWN":-1}
+```
+
+Verify with:
+```bash
+python scripts/extract_subclass_labels.py --data_dir data/ptb-xl --check
+```
+
+**Note:** If you are using z-score normalised data, point `--data_dir` to `data/ptb-xl-zscore` instead.
+
 ---
 ## Sprint 2: Federated AE Updates (Raheeb)
 

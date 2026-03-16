@@ -68,3 +68,53 @@ def plot_bar_comparison(data: Dict[str, Dict[str, Dict[str, float]]],
     ax.legend(); ax.grid(True, axis="y", alpha=0.3)
     if save_path: fig.savefig(save_path)
     return fig
+
+
+def plot_perclass_bar(
+    perclass_data: Dict[str, Dict[str, Dict[str, Dict[str, float]]]],
+    metric: str = "auroc",
+    conditions: Optional[List[str]] = None,
+    title: Optional[str] = None,
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """Grouped bar chart: per-class metric for each model.
+
+    Args:
+        perclass_data: {model_name: {condition: {metric: {"mean", "std"}}}}
+        metric: which metric to plot (default "auroc")
+        conditions: which conditions to include (default: all except "overall")
+        title: plot title
+        save_path: where to save
+    """
+    models = list(perclass_data.keys())
+    if conditions is None:
+        all_conds = set()
+        for model_agg in perclass_data.values():
+            all_conds.update(model_agg.keys())
+        all_conds.discard("overall")
+        conditions = sorted(all_conds)
+
+    if title is None:
+        title = f"Per-Class {metric.upper()} by Model"
+
+    x = np.arange(len(conditions))
+    width = 0.8 / max(len(models), 1)
+    fig, ax = plt.subplots(figsize=(max(8, len(conditions) * 1.8), 5))
+
+    for i, model in enumerate(models):
+        means, stds = [], []
+        for cond in conditions:
+            entry = perclass_data.get(model, {}).get(cond, {}).get(metric, {})
+            means.append(entry.get("mean", 0.0))
+            stds.append(entry.get("std", 0.0))
+        ax.bar(x + i * width, means, width, yerr=stds, label=model,
+               color=COLORS[i % len(COLORS)], capsize=3, edgecolor="white", linewidth=0.5)
+
+    ax.set_xticks(x + width * (len(models) - 1) / 2)
+    ax.set_xticklabels(conditions)
+    ax.set(ylabel=metric.upper(), title=title, ylim=[0, 1.05])
+    ax.legend(loc="lower right")
+    ax.grid(True, axis="y", alpha=0.3)
+    if save_path:
+        fig.savefig(save_path)
+    return fig
