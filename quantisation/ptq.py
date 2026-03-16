@@ -26,12 +26,18 @@ Notes on measurements:
       after inference) measured via psutil. This is not a true
       instantaneous hardware peak profiler. In the report, describe
       it as: "process RSS delta during inference".
+    - Model size is measured as on-disk size of the saved state dict
+      (via get_model_size_mb), NOT via model.model_size_mb() which
+      returns an in-memory estimate (params x 4 bytes). On-disk
+      measurement is used because it captures actual INT8 compression
+      after quantisation, which in-memory estimation does not reflect.
 """
 
 import gc
 import os
 import time
 import argparse
+import importlib
 import torch
 import psutil
 
@@ -51,15 +57,23 @@ def get_model_size_mb(model: torch.nn.Module) -> float:
     Saves the state dict to a unique temporary file, reads its size,
     then deletes it. Using os.getpid() in the filename avoids conflicts
     if the script is ever run in parallel.
+
+    Note: we use on-disk size rather than model.model_size_mb() because
+    the base class estimates size as (params x 4 bytes), which does not
+    reflect actual INT8 compression. On-disk measurement captures the
+    real storage difference between FP32 and INT8 models.
     """
     os.makedirs("outputs", exist_ok=True)
     tmp_path = os.path.join(
         "outputs", f"._tmp_model_size_check_{os.getpid()}.pt"
     )
-    torch.save(model.state_dict(), tmp_path)
-    size_mb = os.path.getsize(tmp_path) / (1024 ** 2)
-    os.remove(tmp_path)
-    return round(size_mb, 4)
+    try:
+        torch.save(model.state_dict(), tmp_path)
+        size_mb = os.path.getsize(tmp_path) / (1024 ** 2)
+        return round(size_mb, 4)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +224,9 @@ def _make_temp_ae() -> torch.nn.Module:
     """
     Temporary placeholder autoencoder used when the real model is
     not yet available. Remove once Shardul and Kaan push their models.
+
+    Inherits count_parameters() and model_size_mb() from BaseAutoencoder,
+    so the full pipeline interface is satisfied without extra methods here.
     """
     import torch.nn as nn
     import torch.nn.functional as F
@@ -258,13 +275,13 @@ def load_model(model_name: str) -> torch.nn.Module:
 
     module_path, class_name = _MODELS[model_name]
     try:
-        import importlib
+        # importlib imported at top of file
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
         return cls()
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError, TypeError) as e:
         print(
-            f"[WARNING] {class_name} not implemented yet "
+            f"[WARNING] Failed to load {class_name}: {e} "
             "— using TempAE placeholder."
         )
         return _make_temp_ae()
@@ -293,6 +310,7 @@ def run_ptq_single(
 
     If the model fails at any step, a warning is printed and the
     pipeline moves on to the next model without crashing.
+    KeyboardInterrupt is re-raised so Ctrl+C always stops the program.
 
     Args:
         model_name: 'vanilla_ae', 'conv_ae', or 'vae'.
@@ -301,13 +319,13 @@ def run_ptq_single(
     """
     set_seed(seed)
 
-    # single-sample batch — shape (1, 12, 1000)
-    splits = create_synthetic_data(n_train=64, n_val=32, n_test=32)
-    loaders = create_dataloaders(splits, batch_size=1)
-    x_sample, _ = next(iter(loaders["test"]))
-    x_sample = x_sample.cpu()
-
     try:
+        # single-sample batch — shape (1, 12, 1000)
+        splits = create_synthetic_data(n_train=64, n_val=32, n_test=32)
+        loaders = create_dataloaders(splits, batch_size=1)
+        x_sample, _ = next(iter(loaders["test"]))
+        x_sample = x_sample.cpu()
+
         # ----------------------------------------------------------------
         # FP32 baseline
         # ----------------------------------------------------------------
@@ -345,13 +363,18 @@ def run_ptq_single(
         # ----------------------------------------------------------------
         # Derived metrics
         # ----------------------------------------------------------------
-        size_reduction_pct = round(
-            (1 - int8_size_mb / fp32_size_mb) * 100, 2
-        )
+        if fp32_size_mb > 0:
+            size_reduction_pct = round(
+                (1 - int8_size_mb / fp32_size_mb) * 100, 2
+            )
+        else:
+            size_reduction_pct = 0.0
+
         speedup_ratio = (
             round(fp32_latency / int8_latency, 3)
             if int8_latency > 0 else None
         )
+        speedup_text = f"x{speedup_ratio}" if speedup_ratio is not None else "N/A"
 
         # ----------------------------------------------------------------
         # Console summary
@@ -373,7 +396,7 @@ def run_ptq_single(
         )
         print(
             f"  {'Reduction':12s}  {size_reduction_pct:>9.1f}%"
-            f"    speedup x{speedup_ratio}"
+            f"    speedup {speedup_text}"
         )
         print(f"  Parameters : {fp32_params:,}")
         print(f"{'=' * 68}\n")
@@ -410,6 +433,8 @@ def run_ptq_single(
             f1=None, epsilon=None, training_time_s=None,
         )
 
+    except KeyboardInterrupt:
+        raise
     except Exception as e:
         print(f"[WARNING] {model_name} failed with error: {e} — skipping.")
 

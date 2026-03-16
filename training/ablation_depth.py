@@ -319,51 +319,72 @@ def find_threshold(model, val_normal_loader, device, percentile=95):
     return float(np.percentile(np.concatenate(scores), percentile))
 
 
-# Training
+# Training — Sprint 3 standard (matches ablation_bottleneck.py)
 def train_single(model_key, bottleneck, loaders, seed, device,
-                 epochs=50, lr=1e-3, weight_decay=1e-5):
+                 epochs=200, lr=1e-3, weight_decay=1e-5, patience=25):
     set_seed(seed)
     ModelClass = MODEL_REGISTRY[model_key]
     model = ModelClass(bottleneck=bottleneck).to(device)
+
+    # Sprint 3: CosineAnnealingWarmRestarts (consistent with bottleneck ablation)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=20, T_mult=2, eta_min=1e-6
+    )
 
     size_mb = model.model_size_mb()
     logger.info(f"  {model_key} | bottleneck={bottleneck} | seed={seed} | "
                 f"params={model.count_parameters():,} | size={size_mb:.2f} MB")
 
-    best_val_auroc = 0.0
+    best_val_mse = float("inf")
+    no_improve = 0
     best_state = None
     train_start = time.time()
 
     for epoch in range(epochs):
         model.train()
         epoch_losses = []
-        for signals, labels in loaders["train"]:
+        for batch_idx, (signals, labels) in enumerate(loaders["train"]):
             signals = signals.to(device)
             optimizer.zero_grad()
             output = model(signals)
             loss = model.compute_loss(signals, output)[0]
             loss.backward()
+            # Sprint 3: gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            scheduler.step(epoch + batch_idx / max(len(loaders["train"]), 1))
             epoch_losses.append(loss.item())
 
-        scheduler.step(np.mean(epoch_losses))
+        # Sprint 3: early stopping on val MSE (not val AUROC)
+        model.eval()
+        val_mse_sum, n_val = 0.0, 0
+        with torch.no_grad():
+            for signals, labels in loaders["val"]:
+                signals = signals.to(device)
+                output = model(signals)
+                val_mse_sum += F.mse_loss(output.x_hat, signals).item()
+                n_val += 1
+        avg_val_mse = val_mse_sum / max(n_val, 1)
 
-        val_scores, val_labels = compute_anomaly_scores(model, loaders["val"], device)
-        val_threshold = find_threshold(model, loaders["val_normal"], device)
-        val_result = compute_metrics(val_labels, val_scores, val_threshold)
-
-        if val_result.auroc > best_val_auroc:
-            best_val_auroc = val_result.auroc
+        if avg_val_mse < best_val_mse:
+            best_val_mse = avg_val_mse
+            no_improve = 0
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
+        else:
+            no_improve += 1
 
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 25 == 0:
             logger.info(f"    Epoch {epoch+1}/{epochs} | Loss: {np.mean(epoch_losses):.6f} | "
-                        f"Val AUROC: {val_result.auroc:.4f}")
+                        f"Val MSE: {avg_val_mse:.6f} | Best: {best_val_mse:.6f}")
+
+        if no_improve >= patience:
+            logger.info(f"    Early stop at epoch {epoch+1}")
+            break
 
     train_time = time.time() - train_start
-    model.load_state_dict(best_state)
+    if best_state:
+        model.load_state_dict(best_state)
 
     test_scores, test_labels = compute_anomaly_scores(model, loaders["test"], device)
     test_threshold = find_threshold(model, loaders["val_normal"], device)
@@ -376,7 +397,7 @@ def train_single(model_key, bottleneck, loaders, seed, device,
 
 def main():
     parser = argparse.ArgumentParser(description="Layer Depth Ablation")
-    parser.add_argument("--data_dir", type=str, default="data/ptb-xl")
+    parser.add_argument("--data_dir", type=str, default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=str, default=None,
                         choices=["vanilla_ae", "conv_ae"])
@@ -384,7 +405,8 @@ def main():
                         choices=["shallow", "default", "deep"])
     parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument("--bottleneck", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--patience", type=int, default=25)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
@@ -426,7 +448,7 @@ def main():
             for seed in seeds:
                 result, size_mb, train_time = train_single(
                     model_key, args.bottleneck, loaders, seed, device,
-                    epochs=args.epochs, lr=args.lr,
+                    epochs=args.epochs, lr=args.lr, patience=args.patience,
                 )
                 results_per_seed.append(result)
 
