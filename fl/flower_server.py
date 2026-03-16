@@ -202,7 +202,7 @@ def main():
     history_file = f"outputs/history/history_{_MODEL_TYPE}_alpha{_ALPHA}_eps{_EPSILON}.json"
     with open(history_file, "w") as f:
         json.dump(history_data, f)
-    print(f"[SUCCESS] Sprint 4 History saved: {history_filename}")
+    print(f"[SUCCESS] Sprint 4 History saved: {history_file}")
 
     if history is None:
         logger.error("Simulation returned none")
