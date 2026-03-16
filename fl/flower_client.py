@@ -214,6 +214,7 @@ class ECGClient(fl.client.NumPyClient):
 
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
         result_dict = metrics.to_dict()
+        result_dict["auroc"] = float(metrics.auroc)
 
         # ── System Tracking ───────────────────────────────────────────────────
         result_dict.update(costs)
@@ -241,7 +242,7 @@ class ECGClient(fl.client.NumPyClient):
         gc.collect()
         torch.cuda.empty_cache()
         
-        return float(metrics.auroc), len(self.loaders["val"].dataset), result_dict
+        return float(np.mean(scores_arr)), len(self.loaders["val"].dataset), result_dict
 
 if __name__ == "__main__":
     import argparse

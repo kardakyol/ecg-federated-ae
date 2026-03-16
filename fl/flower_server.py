@@ -17,6 +17,7 @@ from pathlib import Path
 from utils.csv_logger import ResultLogger
 import matplotlib.pyplot as plt
 from evaluation.plotting import COLORS
+import json
 import os
 import torch
 import time
@@ -191,6 +192,17 @@ def main():
     )
     total_sim_time = time.perf_counter() - start_sim_time
     actual_time_per_round = total_sim_time / _NUM_ROUNDS
+
+    os.makedirs("outputs/history", exist_ok=True)
+    history_data={
+        "rounds": [r for r, _ in history.losses_dustributed],
+        "loss": [loss for _, loss in history.losses_distributed],
+        "auroc": [val for _, val in history.losses_distributed.get("auroc", [])]
+    }
+    history_file = f"outputs/history/history_{_MODEL_TYPE}_alpha{_ALPHA}_eps{_EPSILON}.json"
+    with open(history_file, "w") as f:
+        json.dump(history_data, f)
+    print(f"[SUCCESS] Sprint 4 History saved: {history_filename}")
 
     if history is None:
         logger.error("Simulation returned none")
