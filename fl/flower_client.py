@@ -166,6 +166,7 @@ class ECGClient(fl.client.NumPyClient):
                 loss.backward()
                 ft_optimizer.step()
 
+        arch_costs = compute_all_costs(target_model, device=self.device)
         # ── Model Quantization Phase ──────────────────────────────────────────────
         precision_type = config.get("precision_type", "fp32")
         eval_device = self.device
@@ -188,9 +189,15 @@ class ECGClient(fl.client.NumPyClient):
         # Reset CUDA stats at the start of evaluation to get a "per-round" peak
         if torch.cuda.is_available() and eval_device.type == 'cuda':
             torch.cuda.reset_peak_memory_stats(device=eval_device)
+
+        runtime_costs = compute_all_costs(eval_model, device=eval_device)
+        final_costs = runtime_costs.copy()
+        final_costs["flops_m"] = arch_costs["flops_m"]
+        final_costs["params_m"] = arch_costs["params_m"]
+        
         all_scores = []
         all_labels = []
-        costs = compute_all_costs(eval_model, device=eval_device)
+        
         with torch.no_grad():
             for batch in self.loaders["test"]:
                 x = batch[0].to(eval_device)
@@ -206,10 +213,6 @@ class ECGClient(fl.client.NumPyClient):
         threshold = np.percentile(scores_arr, 95)
         
         if len(np.unique(labels_arr)) < 2:
-            # return float(np.mean(scores_arr)), len(self.loaders["val"].dataset), {
-            #     "val_loss": float(np.mean(scores_arr)),
-            #     "epsilon": str(config.get("epsilon", "inf")),
-            # }
             return 0.0, len(self.loaders["test"].dataset), {"status": "no_labels"}
 
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
@@ -217,7 +220,7 @@ class ECGClient(fl.client.NumPyClient):
         result_dict["auroc"] = float(metrics.auroc)
 
         # ── System Tracking ───────────────────────────────────────────────────
-        result_dict.update(costs)
+        result_dict.update(final_costs)
         result_dict["model_size_mb"] = get_model_size_mb(eval_model)
         
         # System RAM (For Raspberry Pi)
