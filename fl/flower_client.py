@@ -175,9 +175,11 @@ class ECGClient(fl.client.NumPyClient):
                 torch.backends.quantized.engine = 'qnnpack'
                 print("[INFO] Using QNNPACK engine for Raspberry PI")
             # Applying Quantization
+            target_model = target_model.to("cpu")
             from quantisation.ptq import apply_dynamic_quantisation
             eval_model = apply_dynamic_quantisation(target_model.to("cpu"))
             eval_device = torch.device("cpu")
+            print("[INFO] int8 detected: Running evaluation on CPU.")
         else:
             eval_model = target_model
 
@@ -188,7 +190,7 @@ class ECGClient(fl.client.NumPyClient):
             torch.cuda.reset_peak_memory_stats(device=eval_device)
         all_scores = []
         all_labels = []
-        costs = compute_all_costs(eval_model, device=self.device)
+        costs = compute_all_costs(eval_model, device=eval_device)
         with torch.no_grad():
             for batch in self.loaders["test"]:
                 x = batch[0].to(eval_device)
