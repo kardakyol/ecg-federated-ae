@@ -5,7 +5,7 @@ import json
 import glob
 import os
 
-def plot_sprint4_results():
+def plot_results():
     os.makedirs("outputs/figures", exist_ok=True)
     sns.set_theme(style="whitegrid")
 
@@ -46,5 +46,5 @@ def plot_sprint4_results():
             print("[DONE] non_iid_robustness.png saved.")
 
 if __name__ == "__main__":
-    plot_sprint4_results()
+    plot_results()
 	
