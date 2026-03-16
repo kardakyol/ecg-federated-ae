@@ -30,17 +30,22 @@ def plot_results():
 
     if os.path.exists("outputs/dp_fl_results.csv"):
         df = pd.read_csv("outputs/dp_fl_results.csv")
-        plot_df = df[(df['model'] == 'vae') & (df['epsilon'] == 10.0)].sort_values('alpha')
+        plot_df = df[
+            (df['model'].isin(['vae', 'conv'])) & 
+            (df['alpha'].isin([0.5, 1.0])) & 
+            (df['epsilon'] == 10.0)
+        ].sort_values(['alpha', 'model'])
         
         if not plot_df.empty:
-            plt.figure(figsize=(8, 5))
-            ax = sns.barplot(data=plot_df, x='alpha', y='auroc', palette="magma")
+            plt.figure(figsize=(10, 6))
+            ax = sns.barplot(data=plot_df, x='alpha', y='auroc', hue="model", palette="viridis")
             plt.title("Model Robustness to Data Heterogeneity (Dirichlet α vs. AUROC)", fontsize=14)
             plt.xlabel("Heterogeneity Level (Dirichlet α)", fontsize=12)
             plt.ylabel("AUROC", fontsize=12)
-            plt.ylim(0.5, 0.8)
+            plt.ylim(0.4, 0.8)
             for p in ax.patches:
-                ax.annotate(f'{p.get_height():.3f}', (p.get_x() + p.get_width() / 2., p.get_height()),
+                if p.get_height() > 0:
+                    ax.annotate(f'{p.get_height():.3f}', (p.get_x() + p.get_width() / 2., p.get_height()),
                             ha='center', va='bottom', fontsize=11, fontweight='bold')    
             plt.savefig("outputs/figures/non_iid_robustness.png", dpi=300)
             print("[DONE] non_iid_robustness.png saved.")
