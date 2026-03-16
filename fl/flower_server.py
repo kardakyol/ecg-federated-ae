@@ -195,7 +195,7 @@ def main():
 
     os.makedirs("outputs/history", exist_ok=True)
     history_data={
-        "rounds": [r for r, _ in history.losses_dustributed],
+        "rounds": [r for r, _ in history.losses_distributed],
         "loss": [loss for _, loss in history.losses_distributed],
         "auroc": [val for _, val in history.losses_distributed.get("auroc", [])]
     }
