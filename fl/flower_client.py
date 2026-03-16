@@ -190,10 +190,22 @@ class ECGClient(fl.client.NumPyClient):
         if torch.cuda.is_available() and eval_device.type == 'cuda':
             torch.cuda.reset_peak_memory_stats(device=eval_device)
 
-        runtime_costs = compute_all_costs(eval_model, device=eval_device)
-        final_costs = runtime_costs.copy()
-        final_costs["flops_m"] = arch_costs["flops_m"]
-        final_costs["params_m"] = arch_costs["params_m"]
+        if precision_type == "int8":
+            from evaluation.compute_cost import measure_inference_time, measure_peak_memory
+
+            dummy_input = torch.randn((1, 12, 1000), device=eval_device)
+            latency_metrics = measure_inference_time(eval_model, dummy_input)
+            memory_metrics = measure_peak_memory(eval_model, dummy_input)
+
+            final_costs = {
+                "flops_m": arch_costs["flops_m"],
+                "params_m": arch_costs["params_m"],
+                "inference_latency_ms": latency_metrics["inference_latency_ms"],
+                "inference_latency_std_ms": latency_metrics.get("inference_latency_std_ms", 0.0),
+                "peak_memory_mb": memory_metrics["peak_memory_mb"]
+            }
+        else:
+            final_costs = compute_all_costs(eval_model, device=eval_device)
         
         all_scores = []
         all_labels = []
