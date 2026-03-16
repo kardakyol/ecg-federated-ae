@@ -103,3 +103,62 @@ def format_aggregated(agg: Dict[str, Dict[str, float]]) -> str:
     for n, s in agg.items():
         lines.append(f"  {n.upper():12s}: {s['mean']:.4f} +/- {s['std']:.4f}")
     return chr(10).join(lines)
+
+
+def aggregate_perclass_seeds(
+    perclass_results: Dict[str, List[MetricsResult]],
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Aggregate per-class results across seeds.
+
+    Args:
+        perclass_results: {condition: [MetricsResult per seed]}
+            e.g. {"overall": [r1, r2, r3], "MI": [r1, r2, r3], ...}
+
+    Returns:
+        {condition: {metric: {"mean": ..., "std": ...}}}
+    """
+    metric_names = ["auroc", "auprc", "sensitivity", "specificity", "precision", "f1"]
+    agg = {}
+    for condition, results in perclass_results.items():
+        if not results:
+            continue
+        agg[condition] = {}
+        for m in metric_names:
+            vals = [getattr(r, m) for r in results]
+            agg[condition][m] = {
+                "mean": float(np.mean(vals)),
+                "std": float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0,
+            }
+    return agg
+
+
+def format_perclass_table(
+    agg: Dict[str, Dict[str, Dict[str, float]]],
+    metrics: Optional[List[str]] = None,
+) -> str:
+    """Format per-class aggregated results as an aligned table for logging.
+
+    Args:
+        agg: output of aggregate_perclass_seeds()
+        metrics: which metrics to include (default: all 6)
+    """
+    if metrics is None:
+        metrics = ["auroc", "auprc", "sensitivity", "specificity", "precision", "f1"]
+
+    header = f"{'Condition':<12s}"
+    for m in metrics:
+        header += f"  {m.upper():>18s}"
+    lines = [header, "-" * len(header)]
+
+    for condition, metric_dict in agg.items():
+        row = f"{condition:<12s}"
+        for m in metrics:
+            if m in metric_dict:
+                mean = metric_dict[m]["mean"]
+                std = metric_dict[m]["std"]
+                row += f"  {mean:>7.4f}+/-{std:.4f}"
+            else:
+                row += f"  {'N/A':>18s}"
+        lines.append(row)
+
+    return chr(10).join(lines)

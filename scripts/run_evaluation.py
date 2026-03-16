@@ -23,8 +23,8 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from evaluation.metrics import aggregate_seeds, MetricsResult
-from evaluation.plotting import plot_bar_comparison, plot_roc, plot_pr, COLORS
+from evaluation.metrics import aggregate_seeds, MetricsResult, aggregate_perclass_seeds, format_perclass_table
+from evaluation.plotting import plot_bar_comparison, plot_roc, plot_pr, plot_perclass_bar, COLORS
 from evaluation.compute_cost import compute_all_costs
 from evaluation.statistical_tests import (
     pairwise_wilcoxon,
@@ -77,6 +77,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--device", default="cpu", type=str,
         help="Device for computation cost benchmarking (default: cpu).",
+    )
+    p.add_argument(
+        "--perclass", action="store_true",
+        help="Enable per-class evaluation. Auto-detected if 'condition' column exists in CSV.",
+    )
+    p.add_argument(
+        "--perclass_results", type=str, default=None,
+        help="Path to per-class CSV (e.g. outputs/ablation_perClass.csv or outputs/perclass_breakdown.csv).",
     )
     return p.parse_args()
 
@@ -285,6 +293,184 @@ def run_compute_costs(df: pd.DataFrame, figures_dir: Path, checkpoints_dir: Path
         logger.info(f"Computation costs saved to {save_path}")
 
 
+PERCLASS_CONDITIONS = ["MI", "STTC", "HYP", "CD"]
+
+
+def load_perclass_results(csv_path: str) -> pd.DataFrame:
+    """Load a per-class results CSV, handling both formats:
+
+    Format A (ablation_perClass.csv): has 'condition' column with values
+        like 'overall', 'MI', 'STTC', 'HYP', 'CD'.
+    Format B (perclass_breakdown.csv): has columns like 'MI_auroc',
+        'STTC_auroc', etc. in wide format.
+
+    Returns a normalised long-format DataFrame with columns:
+        model, seed, condition, auroc, auprc, [sensitivity, specificity, precision, f1]
+    """
+    path = Path(csv_path)
+    if not path.exists():
+        logger.error(f"Per-class results file not found: {path}")
+        sys.exit(1)
+
+    df = pd.read_csv(path)
+    logger.info(f"Loaded {len(df)} rows from {path}")
+
+    if "condition" in df.columns:
+        return df
+
+    wide_cols = [c for c in df.columns if any(c.startswith(f"{cls}_") for cls in PERCLASS_CONDITIONS)]
+    if wide_cols:
+        rows = []
+        for _, row in df.iterrows():
+            base = {
+                "model": row.get("model", ""),
+                "seed": row.get("seed", ""),
+            }
+            if "overall_auroc" in df.columns:
+                overall = {**base, "condition": "overall",
+                           "auroc": row.get("overall_auroc", ""),
+                           "auprc": row.get("overall_auprc", "")}
+                rows.append(overall)
+            for cls in PERCLASS_CONDITIONS:
+                entry = {**base, "condition": cls}
+                for metric in ["auroc", "auprc"]:
+                    col = f"{cls}_{metric}"
+                    entry[metric] = row.get(col, "")
+                rows.append(entry)
+        return pd.DataFrame(rows)
+
+    logger.warning("CSV does not appear to contain per-class data.")
+    return df
+
+
+def generate_perclass_summary(df: pd.DataFrame) -> str:
+    """Generate per-class summary table from a per-class DataFrame.
+
+    Expects columns: model, condition, and at least 'auroc'.
+    Groups by (model, condition) and reports mean +/- std for each metric.
+    """
+    if "condition" not in df.columns:
+        return "No per-class data (missing 'condition' column)."
+
+    metric_cols = [m for m in EVAL_METRICS if m in df.columns]
+    if not metric_cols:
+        return "No metric columns found in per-class data."
+
+    lines = []
+    header = f"{'Model':<25s} {'Condition':<12s}"
+    for m in metric_cols:
+        header += f"  {m.upper():>18s}"
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    groupby_cols = ["model", "condition"]
+    for keys, group in df.groupby(groupby_cols, sort=False):
+        model, condition = keys
+        row = f"{model:<25s} {condition:<12s}"
+        for m in metric_cols:
+            if m in group.columns:
+                vals = pd.to_numeric(group[m], errors="coerce").dropna().values
+                if len(vals) > 1:
+                    row += f"  {np.mean(vals):>7.4f}+/-{np.std(vals, ddof=1):.4f}"
+                elif len(vals) == 1:
+                    row += f"  {vals[0]:>18.4f}"
+                else:
+                    row += f"  {'N/A':>18s}"
+        lines.append(row)
+
+    return "\n".join(lines)
+
+
+def generate_perclass_bar(df: pd.DataFrame, figures_dir: Path) -> None:
+    """Generate per-class bar charts (one per metric) from per-class DataFrame."""
+    if "condition" not in df.columns:
+        logger.warning("No 'condition' column — skipping per-class bar charts.")
+        return
+
+    conditions = [c for c in PERCLASS_CONDITIONS if c in df["condition"].values]
+    if not conditions:
+        logger.warning("No per-class conditions found in data.")
+        return
+
+    perclass_data = {}
+    for model, model_df in df.groupby("model"):
+        model_agg = {}
+        for cond in conditions:
+            cond_df = model_df[model_df["condition"] == cond]
+            metric_dict = {}
+            for m in EVAL_METRICS:
+                if m in cond_df.columns:
+                    vals = pd.to_numeric(cond_df[m], errors="coerce").dropna().values
+                    if len(vals) > 0:
+                        metric_dict[m] = {
+                            "mean": float(np.mean(vals)),
+                            "std": float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0,
+                        }
+            if metric_dict:
+                model_agg[cond] = metric_dict
+        if model_agg:
+            perclass_data[str(model)] = model_agg
+
+    if not perclass_data:
+        logger.warning("No per-class data to plot.")
+        return
+
+    for metric in ["auroc", "auprc"]:
+        has_data = any(
+            metric in cond_dict
+            for model_agg in perclass_data.values()
+            for cond_dict in model_agg.values()
+        )
+        if not has_data:
+            continue
+        save_path = figures_dir / f"perclass_{metric}.pdf"
+        plot_perclass_bar(
+            perclass_data, metric=metric, conditions=conditions,
+            title=f"Per-Class {metric.upper()} Comparison", save_path=str(save_path),
+        )
+        logger.info(f"Per-class {metric} bar chart saved to {save_path}")
+
+
+def run_perclass_significance(df: pd.DataFrame, figures_dir: Path) -> None:
+    """Run pairwise Wilcoxon tests on per-class data, per condition."""
+    if "condition" not in df.columns or "seed" not in df.columns:
+        logger.warning("Per-class significance tests require 'condition' and 'seed' columns.")
+        return
+
+    from evaluation.statistical_tests import pairwise_wilcoxon, save_significance_csv
+
+    all_pairs = []
+    conditions = [c for c in PERCLASS_CONDITIONS if c in df["condition"].values]
+
+    for cond in conditions:
+        cond_df = df[df["condition"] == cond]
+        for metric in EVAL_METRICS:
+            if metric not in cond_df.columns:
+                continue
+            results_dict = {}
+            for model, group in cond_df.groupby("model"):
+                vals = pd.to_numeric(
+                    group.sort_values("seed")[metric], errors="coerce"
+                ).dropna().values.tolist()
+                if len(vals) >= 2:
+                    results_dict[str(model)] = vals
+
+            if len(results_dict) < 2:
+                continue
+
+            min_len = min(len(v) for v in results_dict.values())
+            results_dict = {k: v[:min_len] for k, v in results_dict.items()}
+
+            pairs, summary = pairwise_wilcoxon(results_dict, metric=f"{cond}_{metric}")
+            print(f"\n{summary}\n")
+            all_pairs.extend(pairs)
+
+    if all_pairs:
+        save_path = figures_dir / "perclass_significance_tests.csv"
+        save_significance_csv(all_pairs, save_path)
+        logger.info(f"Per-class significance results saved to {save_path}")
+
+
 def main() -> None:
     args = parse_args()
     setup_logging()
@@ -317,6 +503,26 @@ def main() -> None:
             Path(args.checkpoints_dir),
             args.device,
         )
+
+    perclass_csv = args.perclass_results or args.results
+    perclass_df = load_perclass_results(perclass_csv) if args.perclass else None
+
+    if perclass_df is None and "condition" in df.columns:
+        perclass_df = df
+        logger.info("Auto-detected per-class data ('condition' column found).")
+
+    if perclass_df is not None and "condition" in perclass_df.columns:
+        print("\n" + "=" * 60)
+        print("PER-CLASS RESULTS SUMMARY")
+        print("=" * 60)
+        print(generate_perclass_summary(perclass_df))
+        print("=" * 60 + "\n")
+
+        generate_perclass_bar(perclass_df, figures_dir)
+
+        if args.run_significance:
+            logger.info("Running per-class significance tests...")
+            run_perclass_significance(perclass_df, figures_dir)
 
     logger.info("Evaluation complete. Figures saved to %s", figures_dir)
 
