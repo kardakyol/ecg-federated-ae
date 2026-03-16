@@ -38,13 +38,10 @@ _BETA = 0.5
 
 
 # ── Factory to create ECGClient instances for the simulation ─────────────────────────────────────────────────────── 
-def client_fn(cid: str):
-    """
-    Creates a client instance. Note: Alpha is used for data splitting 
-    logic during client initialization. 
-    """
+def client_fn(context): # Here the variable is named 'context'
+    cid = context.node_config["partition-id"] 
     return ECGClient(
-        client_id=cid,
+        client_id=str(cid),
         model_type=_MODEL_TYPE,
         alpha=_ALPHA,
     ).to_client()
@@ -194,10 +191,11 @@ def main():
     actual_time_per_round = total_sim_time / _NUM_ROUNDS
 
     os.makedirs("outputs/history", exist_ok=True)
+    dist_metrics = getattr(history, "metrics_distributed", {})
     history_data={
         "rounds": [r for r, _ in history.losses_distributed],
         "loss": [loss for _, loss in history.losses_distributed],
-        "auroc": [val for _, val in history.losses_distributed.get("auroc", [])]
+        "auroc": [val for _, val in dist_metrics.get("auroc", [])]
     }
     history_file = f"outputs/history/history_{_MODEL_TYPE}_alpha{_ALPHA}_eps{_EPSILON}.json"
     with open(history_file, "w") as f:
@@ -232,12 +230,17 @@ def main():
             output_dir / "dp_fl_results.csv",
             extra_columns=[
                 "epochs", "rounds", "alpha", 
-                "noise_multiplier", "time_per_round_s", "clients"
+                "noise_multiplier", "time_per_round_s", "clients",
+                "MI_auroc", "STTC_auroc", "HYP_auroc", "CD_auroc"
             ]
         )
         if "precision" in final_metrics_summary:
             final_metrics_summary["precision_score"] = final_metrics_summary.pop("precision")
         
+        for cls_metric in ["MI_auroc", "STTC_auroc", "HYP_auroc", "CD_auroc"]:
+            if cls_metric not in final_metrics_summary:
+                final_metrics_summary[cls_metric] = 0.0
+
         logger_csv.log(
             model=_MODEL_TYPE,
             setting="federated_dp" if _EPSILON != float('inf') else "federated",

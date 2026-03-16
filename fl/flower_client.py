@@ -21,6 +21,7 @@ from opacus.accountants.utils import get_noise_multiplier
 import psutil
 import os
 import io
+from sklearn.metrics import roc_auc_score
 
 def get_model_size_mb(model):
     """Accurately measures model size including quantized PackedParams."""
@@ -61,6 +62,14 @@ class ECGClient(fl.client.NumPyClient):
         self.last_train_time = 0.0
         # Track Privacy Engine state
         self.privacy_engine = None
+
+        self.test_subclass = None
+        sub_path = Path("data/ptb-xl/test_subclass_labels.npy")
+        if sub_path.exists():
+            self.test_subclass = np.load(sub_path)
+            # Ensure it matches test set length if using a subset
+            test_len = len(self.splits["test"])
+            self.test_subclass = self.test_subclass[:test_len]
 
     def get_parameters(self, config):
         model_to_use = self.model._module if hasattr(self.model, "_module") else self.model
@@ -230,6 +239,19 @@ class ECGClient(fl.client.NumPyClient):
         metrics = compute_metrics(labels_arr, scores_arr, threshold)
         result_dict = metrics.to_dict()
         result_dict["auroc"] = float(metrics.auroc)
+
+        if self.test_subclass is not None:
+            norm_mask = (self.test_subclass == 0)
+            for cls_idx, cls_name in {1: "MI", 2: "STTC", 3: "HYP", 4: "CD"}.items():
+                cls_mask = (self.test_subclass == cls_idx)
+                mask = norm_mask | cls_mask
+                if np.sum(cls_mask) > 0:
+                    try:
+                        sub_scores = scores_arr[mask]
+                        sub_labels = (self.test_subclass[mask] == cls_idx).astype(int)
+                        result_dict[f"{cls_name}_auroc"] = float(roc_auc_score(sub_labels, sub_scores))
+                    except:
+                        result_dict[f"{cls_name}_auroc"] = 0.0
 
         # ── System Tracking ───────────────────────────────────────────────────
         result_dict.update(final_costs)

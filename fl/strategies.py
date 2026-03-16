@@ -13,7 +13,10 @@ def weighted_average(metrics: List[tuple[int, Metrics]]) -> Metrics:
     
     # Get a list of all unique metric keys present in the first client's results
     # (e.g., ['auroc', 'auprc', 'sensitivity'])
-    all_keys=metrics[0][1].keys()
+    all_keys=set()
+    for _, m in metrics:
+        all_keys.update(m.keys())
+        
     aggregated_metrics = {}
     total_examples = sum(num_examples for num_examples, _ in metrics)
 
@@ -21,13 +24,12 @@ def weighted_average(metrics: List[tuple[int, Metrics]]) -> Metrics:
         return {}
     
     for key in all_keys:
-        # Check if the value is numeric before trying to average it
-        val = metrics[0][1][key]
-        if isinstance(val, (int, float)):
+        representative_val = next((m[key] for _, m in metrics if key in m), None)
+        if isinstance(representative_val, (int, float)):
             weighted_sum = sum(num_examples * m[key] for num_examples, m in metrics if key in m)
             aggregated_metrics[key] = weighted_sum / total_examples
         else:
-            aggregated_metrics[key] = val
+            aggregated_metrics[key] = representative_val
 
     return aggregated_metrics
 
