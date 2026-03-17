@@ -60,7 +60,7 @@ def plot_convergence_from_history(precision):
 
 def plot_robustness_with_shared_method(precision):
     """Filters a single CSV by the 'precision_type' column."""
-    csv_path = "outputs/dp_fl_results.csv"
+    csv_path = "outputs/final_results.csv"
     if not os.path.exists(csv_path):
         return
 
@@ -110,7 +110,7 @@ def plot_robustness_with_shared_method(precision):
 
 def plot_perclass_with_shared_method(precision):
     """Filters a single CSV by 'precision_type' for per-class AUROC."""
-    csv_path = "outputs/dp_fl_results.csv"
+    csv_path = "outputs/final_results.csv"
     if not os.path.exists(csv_path): return
 
     full_df = pd.read_csv(csv_path)
