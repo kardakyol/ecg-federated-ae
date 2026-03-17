@@ -197,7 +197,7 @@ def main():
         "loss": [loss for _, loss in history.losses_distributed],
         "auroc": [val for _, val in dist_metrics.get("auroc", [])]
     }
-    history_file = f"outputs/history/history_{_MODEL_TYPE}_alpha{_ALPHA}_eps{_EPSILON}.json"
+    history_file = f"outputs/history/history_{_MODEL_TYPE}_alpha{_ALPHA}_eps{_EPSILON}_seed{args.seed}.json"
     with open(history_file, "w") as f:
         json.dump(history_data, f)
     print(f"[SUCCESS] Sprint 4 History saved: {history_file}")
