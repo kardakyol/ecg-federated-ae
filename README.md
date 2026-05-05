@@ -53,8 +53,8 @@ Tested with Python 3.10–3.12 on Linux (CUDA 11.8 / 12.1) and macOS
 Ubuntu Server 22.04).
 
 ```bash
-# Clone the (anonymized) repository
-git clone <ANONYMIZED_REPO_URL>
+# Clone the repository
+git clone <REPO_URL>
 cd ecg-federated-ae
 
 # Recommended: isolated environment
