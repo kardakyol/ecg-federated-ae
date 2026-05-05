@@ -1,38 +1,3 @@
-"""
-Post-Training Quantisation (PTQ) Pipeline
-==========================================
-Owner: Ghadah (Person E) — Quantisation + Edge Deployment
-Sprint: S2 (preparation), S3 (full experiments)
-
-Usage:
-    python quantisation/ptq.py --model vanilla_ae
-    python quantisation/ptq.py --model conv_ae
-    python quantisation/ptq.py --model vae
-    python quantisation/ptq.py --model all
-
-Model interface (from models/base.py — DO NOT MODIFY):
-    output = model(x)            # AEOutput with .x_hat guaranteed
-    size   = model.model_size_mb()
-    params = model.count_parameters()
-
-Outputs:
-    outputs/quantisation_results.csv   — logged via ResultLogger
-
-Notes on measurements:
-    - FLOPs are measured on FP32 architecture only. INT8 dynamic
-      quantisation does not change the model architecture, only the
-      numerical precision of weights. Both rows share the same FLOPs.
-    - peak_memory_mb stores a process RSS delta estimate (before vs
-      after inference) measured via psutil. This is not a true
-      instantaneous hardware peak profiler. In the report, describe
-      it as: "process RSS delta during inference".
-    - Model size is measured as on-disk size of the saved state dict
-      (via get_model_size_mb), NOT via model.model_size_mb() which
-      returns an in-memory estimate (params x 4 bytes). On-disk
-      measurement is used because it captures actual INT8 compression
-      after quantisation, which in-memory estimation does not reflect.
-"""
-
 import gc
 import os
 import time
@@ -51,18 +16,7 @@ from utils.csv_logger import ResultLogger
 # ---------------------------------------------------------------------------
 
 def get_model_size_mb(model: torch.nn.Module) -> float:
-    """
-    Measure the on-disk size of a model's state dict in megabytes.
-
-    Saves the state dict to a unique temporary file, reads its size,
-    then deletes it. Using os.getpid() in the filename avoids conflicts
-    if the script is ever run in parallel.
-
-    Note: we use on-disk size rather than model.model_size_mb() because
-    the base class estimates size as (params x 4 bytes), which does not
-    reflect actual INT8 compression. On-disk measurement captures the
-    real storage difference between FP32 and INT8 models.
-    """
+    """Measure the on-disk size of a model's state dict in megabytes."""
     os.makedirs("outputs", exist_ok=True)
     tmp_path = os.path.join(
         "outputs", f"._tmp_model_size_check_{os.getpid()}.pt"
@@ -86,17 +40,7 @@ def measure_inference_latency_ms(
     n_warmup: int = 10,
     n_runs: int = 100,
 ) -> float:
-    """
-    Measure mean inference latency in milliseconds.
-
-    Runs n_warmup passes first (results discarded) to eliminate
-    cold-start bias from CPU caching and memory paging. Then times
-    n_runs passes and returns the mean.
-
-    Both model.eval() and torch.inference_mode() are required:
-    - eval()             disables dropout and batchnorm training behaviour
-    - inference_mode()   disables gradient tracking for maximum speed
-    """
+    """Measure mean inference latency in milliseconds."""
     model.eval()
     x = x.cpu()
 
@@ -118,18 +62,7 @@ def measure_inference_latency_ms(
 # ---------------------------------------------------------------------------
 
 def measure_flops_m(model: torch.nn.Module, x: torch.Tensor) -> float:
-    """
-    Measure FLOPs (floating point operations) in millions using ptflops.
-
-    FLOPs are measured on the FP32 model only. Dynamic INT8 quantisation
-    changes the numerical precision of weights but does NOT change the
-    model architecture, so FP32 and INT8 share the same FLOPs count.
-
-    ptflops counts MACs (multiply-accumulate operations). Each MAC
-    equals one multiply + one add = 2 FLOPs, so we multiply by 2.
-
-    Returns 0.0 with a warning if ptflops is unavailable or fails.
-    """
+    """Measure FLOPs (floating point operations) in millions using ptflops."""
     try:
         from ptflops import get_model_complexity_info
 
@@ -160,21 +93,7 @@ def measure_flops_m(model: torch.nn.Module, x: torch.Tensor) -> float:
 # ---------------------------------------------------------------------------
 
 def measure_peak_memory_mb(model: torch.nn.Module, x: torch.Tensor) -> float:
-    """
-    Estimate process-level memory increase during a single forward pass.
-
-    Measures the OS-level Resident Set Size (RSS) before and after
-    inference using psutil. The delta is the memory increase caused
-    by one forward pass.
-
-    gc.collect() is called before the baseline reading to flush Python
-    garbage and reduce noise in the measurement.
-
-    IMPORTANT: This is a process RSS delta estimate, not a true
-    instantaneous hardware peak profiler. Small values or 0.0 are
-    expected for lightweight models — this is normal OS behaviour.
-    In the paper, describe as: "process RSS delta during inference".
-    """
+    """Estimate process-level memory increase during a single forward pass."""
     model.eval()
     x = x.cpu()
 
@@ -194,19 +113,7 @@ def measure_peak_memory_mb(model: torch.nn.Module, x: torch.Tensor) -> float:
 # ---------------------------------------------------------------------------
 
 def apply_dynamic_quantisation(model: torch.nn.Module) -> torch.nn.Module:
-    """
-    Apply PyTorch dynamic post-training quantisation (FP32 -> INT8).
-
-    Targets Linear layers only. Weights are quantised statically to
-    INT8; activations are quantised dynamically on each forward pass.
-
-    Conv1d layers are NOT quantised by this method — they require
-    static quantisation or ONNX Runtime (planned for Sprint 3).
-
-    Note: torch.quantization.quantize_dynamic is deprecated in PyTorch
-    2.10+. It remains functional for now but will need migration to
-    torchao in a future sprint.
-    """
+    """Apply PyTorch dynamic post-training quantisation (FP32 -> INT8)."""
     model.eval()
     quantised = torch.quantization.quantize_dynamic(
         model,
@@ -221,13 +128,6 @@ def apply_dynamic_quantisation(model: torch.nn.Module) -> torch.nn.Module:
 # ---------------------------------------------------------------------------
 
 def _make_temp_ae() -> torch.nn.Module:
-    """
-    Temporary placeholder autoencoder used when the real model is
-    not yet available. Remove once Shardul and Kaan push their models.
-
-    Inherits count_parameters() and model_size_mb() from BaseAutoencoder,
-    so the full pipeline interface is satisfied without extra methods here.
-    """
     import torch.nn as nn
     import torch.nn.functional as F
     from models.base import BaseAutoencoder, AEOutput
@@ -296,27 +196,7 @@ def run_ptq_single(
     logger: ResultLogger,
     seed: int = 42,
 ) -> None:
-    """
-    Run the full PTQ pipeline for one model and one seed.
-
-    Steps:
-        1. Create a synthetic single-sample batch.
-        2. Load FP32 model and measure: size, latency, FLOPs, RSS delta.
-        3. Apply dynamic INT8 quantisation.
-        4. Measure INT8: size, latency, RSS delta.
-           (INT8 FLOPs = FP32 FLOPs — architecture unchanged.)
-        5. Sanity check: INT8 output x_hat shape must match input.
-        6. Log FP32 and INT8 rows to CSV via ResultLogger.
-
-    If the model fails at any step, a warning is printed and the
-    pipeline moves on to the next model without crashing.
-    KeyboardInterrupt is re-raised so Ctrl+C always stops the program.
-
-    Args:
-        model_name: 'vanilla_ae', 'conv_ae', or 'vae'.
-        logger:     Shared ResultLogger instance.
-        seed:       Random seed for reproducibility.
-    """
+    """Run the full PTQ pipeline for one model and one seed."""
     set_seed(seed)
 
     try:
@@ -445,7 +325,7 @@ def run_ptq_single(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Post-Training Quantisation pipeline — Ghadah (Person E)"
+        description="Post-Training Quantisation pipeline"
     )
     parser.add_argument(
         "--model",

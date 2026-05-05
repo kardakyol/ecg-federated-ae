@@ -1,16 +1,7 @@
 """
-run_vae_ablation.py — Person C (Kaan), Sprint 3
+run_vae_ablation.py 
 ================================================
 VAE bottleneck ablation: latent_dim in {8, 16, 32, 64, 128}, 3 seeds each.
-
-Sprint 3 updates:
-  - CosineAnnealingWarmRestarts (from max_auroc_pipeline)
-  - Gradient clipping max_norm=1.0
-  - weight_decay=1e-5
-  - patience=25
-  - epochs=200 (was 100)
-  - Added bn=8 to range
-  - Default data_dir=data/ptb-xl-zscore
 
 Usage:
     python scripts/run_vae_ablation.py --data_dir data/ptb-xl-zscore
@@ -195,11 +186,11 @@ def make_loaders(splits, bs=64) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Train / Evaluate (Sprint 3: cosine annealing + grad clip)
+# Train / Evaluate (cosine annealing + grad clip)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def train_model(model, loaders, device, epochs, beta=0.5, patience=25):
-    """Sprint 3 optimised training loop matching max_auroc_pipeline."""
+    """Optimised training loop matching max_auroc_pipeline."""
     opt = Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     sched = CosineAnnealingWarmRestarts(opt, T_0=20, T_mult=2, eta_min=1e-6)
     best, no_imp, best_state = float("inf"), 0, None
@@ -213,7 +204,7 @@ def train_model(model, loaders, device, epochs, beta=0.5, patience=25):
             x_hat, mu, lv = model(x)
             loss, _ = model.loss(x, x_hat, mu, lv, beta, kl_w)
             loss.backward()
-            # Sprint 3: gradient clipping
+            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             sched.step(epoch + batch_idx / max(len(loaders["train"]), 1))
@@ -304,7 +295,7 @@ def append_csv(path: str, row: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="VAE Bottleneck Ablation — Sprint 3")
+    parser = argparse.ArgumentParser(description="VAE Bottleneck Ablation")
     parser.add_argument("--data_dir",    default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic",   action="store_true")
     parser.add_argument("--quick",       action="store_true",

@@ -1,8 +1,5 @@
 """
 DATA DIAGNOSTIC — Run this FIRST before any model experiments.
-================================================================
-Checks Ghouse's preprocessed .npy files for common issues that
-cause all models to hover around ~0.60 AUROC.
 
 USAGE (Colab):
     # After mounting drive / downloading data:

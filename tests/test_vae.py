@@ -56,7 +56,7 @@ def small_loaders():
 
 class TestArchitecture:
     def test_extends_base_autoencoder(self, model):
-        """VAE MUST extend BaseAutoencoder for Raheeb/Ghadah/Hilal."""
+        """VAE MUST extend BaseAutoencoder"""
         from models.base import BaseAutoencoder
         assert isinstance(model, BaseAutoencoder)
 
@@ -96,7 +96,7 @@ class TestForwardPass:
             f"x_hat shape {output.x_hat.shape} != input shape {batch.shape}"
 
     def test_vae_fields_populated(self, model, batch):
-        """VAE must fill mu, logvar, z (unlike Shardul's models)."""
+        """VAE must fill mu, logvar, z."""
         output = model(batch)
         assert output.mu is not None
         assert output.logvar is not None
@@ -213,7 +213,7 @@ class TestAnomalyScoring:
 
 
 # ================================================================
-# 5. FLOWER COMPATIBILITY (Raheeb Sprint 2)
+# 5. FLOWER COMPATIBILITY
 # ================================================================
 
 class TestFlowerCompatibility:
@@ -254,7 +254,7 @@ class TestFlowerCompatibility:
 
 
 # ================================================================
-# 6. OPACUS READINESS (Hilal Sprint 3)
+# 6. OPACUS READINESS 
 # ================================================================
 
 class TestOpacusReadiness:

@@ -1,15 +1,4 @@
 """
-KAAN + SHARDUL (Persons B + C) — Sprint 2/3: Federated AE Training
-====================================================================
-Sprint 3 updates:
-  - bottleneck=128 (from ablation)
-  - Gradient clipping in local_train (max_norm=1.0)
-  - weight_decay=1e-5 in local optimizer
-  - Default data_dir=data/ptb-xl-zscore
-
-Flower simulation mode preserved exactly as-is for Raheeb.
-Only manual FedAvg local_train and MODEL_REGISTRY changed.
-
 USAGE:
     python scripts/run_federated.py --data_dir data/ptb-xl-zscore
     python scripts/run_federated.py --data_dir data/ptb-xl-zscore --model conv --quick
@@ -35,7 +24,7 @@ from utils.csv_logger import ResultLogger
 from evaluation.metrics import compute_metrics, aggregate_seeds, format_aggregated
 
 
-# Sprint 3: bottleneck=128 default
+# bottleneck=128 default
 MODEL_REGISTRY = {
     "vanilla": ("VanillaAE", lambda: VanillaAE(bottleneck=128)),
     "conv":    ("ConvAE",    lambda: ConvAE(bottleneck=128)),
@@ -73,7 +62,7 @@ def partition_iid(global_splits, num_clients, seed=42):
 
 
 # ====================================================================
-# Manual FedAvg (Sprint 3: added grad clip + weight decay)
+# Manual FedAvg 
 # ====================================================================
 def fedavg_aggregate(client_params_list, client_sizes):
     total = sum(client_sizes)
@@ -87,7 +76,7 @@ def fedavg_aggregate(client_params_list, client_sizes):
 
 
 def local_train(model, loaders, epochs, model_type, beta=0.5, lr=0.001):
-    """One client's local training. Sprint 3: added grad clip + weight decay."""
+    """One client's local training."""
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
     is_vae = model_type == "vae"
     total_loss = 0.0
@@ -108,7 +97,7 @@ def local_train(model, loaders, epochs, model_type, beta=0.5, lr=0.001):
                 loss, *_ = model.compute_loss(x, output)
 
             loss.backward()
-            # Sprint 3: gradient clipping
+            # gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             total_loss += loss.item()
@@ -208,7 +197,7 @@ def run_manual_fedavg(model_type, seed, global_splits, num_clients,
 
 
 # ====================================================================
-# Flower Simulation (UNCHANGED — Raheeb's code)
+# Flower Simulation 
 # ====================================================================
 def run_flower_simulation(model_type, seed, global_splits, num_clients,
                           num_rounds, local_epochs, beta, device):
@@ -276,11 +265,11 @@ def run_flower_simulation(model_type, seed, global_splits, num_clients,
 
 
 # ====================================================================
-# Main (Sprint 3: default data_dir changed)
+# Main (default data_dir changed)
 # ====================================================================
 def main():
     parser = argparse.ArgumentParser(
-        description="Sprint 2/3: Federated AE Training (Persons B + C)"
+        description="Federated AE Training"
     )
     parser.add_argument("--model", type=str, default=None,
                         choices=["vanilla", "conv", "vae"])

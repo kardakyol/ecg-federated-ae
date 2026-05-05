@@ -1,11 +1,3 @@
-"""
-RAHEEB: Model factory for FL pipeline.
-
-Sprint 1: All model types returned DummyAE for pipeline testing.
-Sprint 2: Real models now active — VanillaAE, ConvAE, VAE.
-Sprint 3: Updated default bottleneck to 128 (B+C ablation result).
-"""
-
 import torch
 import torch.nn as nn
 from models.base import BaseAutoencoder, AEOutput
@@ -36,7 +28,7 @@ class DummyAE(BaseAutoencoder):
         return (loss,)
 
 
-# Sprint 3: bottleneck=128 is the project default (from B+C ablation)
+# bottleneck=128 is the project default
 DEFAULT_BOTTLENECK = 128
 
 

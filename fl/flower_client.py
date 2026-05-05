@@ -1,8 +1,3 @@
-"""
-RAHEEB: Flower client and server configuration.
-Optimized for Sprint 2 completion and Sprint 3 stability.
-"""
-
 import flwr as fl
 import torch
 import numpy as np 

@@ -8,9 +8,6 @@ USAGE:
     result = wilcoxon_test([0.91, 0.92, 0.90], [0.88, 0.87, 0.86])
     pairs, summary = pairwise_wilcoxon({"ModelA": [0.91, 0.92, 0.90],
                                          "ModelB": [0.88, 0.87, 0.86]})
-
-WHO USES THIS:
-    Everyone - Sprint 3 ablation study (7-config Wilcoxon), paper statistical rigour
 """
 from __future__ import annotations
 

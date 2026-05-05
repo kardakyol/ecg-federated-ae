@@ -319,14 +319,14 @@ def find_threshold(model, val_normal_loader, device, percentile=95):
     return float(np.percentile(np.concatenate(scores), percentile))
 
 
-# Training — Sprint 3 standard (matches ablation_bottleneck.py)
+# Training Standard (matches ablation_bottleneck.py)
 def train_single(model_key, bottleneck, loaders, seed, device,
                  epochs=200, lr=1e-3, weight_decay=1e-5, patience=25):
     set_seed(seed)
     ModelClass = MODEL_REGISTRY[model_key]
     model = ModelClass(bottleneck=bottleneck).to(device)
 
-    # Sprint 3: CosineAnnealingWarmRestarts (consistent with bottleneck ablation)
+    # CosineAnnealingWarmRestarts (consistent with bottleneck ablation)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=20, T_mult=2, eta_min=1e-6
@@ -350,13 +350,13 @@ def train_single(model_key, bottleneck, loaders, seed, device,
             output = model(signals)
             loss = model.compute_loss(signals, output)[0]
             loss.backward()
-            # Sprint 3: gradient clipping
+            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step(epoch + batch_idx / max(len(loaders["train"]), 1))
             epoch_losses.append(loss.item())
 
-        # Sprint 3: early stopping on val MSE (not val AUROC)
+        # Early stopping on val MSE (not val AUROC)
         model.eval()
         val_mse_sum, n_val = 0.0, 0
         with torch.no_grad():

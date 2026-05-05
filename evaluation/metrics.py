@@ -2,22 +2,11 @@
 SHARED EVALUATION METRICS - SINGLE SOURCE OF TRUTH
 DO NOT MODIFY without team consensus.
 
-WHY THIS EXISTS:
-    If everyone writes their own AUROC function, we get inconsistent numbers
-    in the paper. This module is the ONE place metrics are computed.
-
 USAGE:
     from evaluation.metrics import compute_metrics, aggregate_seeds
     result = compute_metrics(y_true, scores, threshold)
     print(result.auroc, result.f1)
 
-WHO USES THIS:
-    Shardul  - centralised AE baselines
-    Kaan     - centralised VAE baselines
-    Raheeb   - federated evaluation per round
-    Ghadah   - quantised model evaluation
-    Hilal    - DP model evaluation
-    Ghouse   - ablation study evaluation
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -88,7 +77,6 @@ def compute_metrics(y_true: np.ndarray, scores: np.ndarray, threshold: float) ->
 
 
 def aggregate_seeds(results: List[MetricsResult]) -> Dict[str, Dict[str, float]]:
-    """Aggregate over seeds -> mean +/- std for paper tables."""
     names = ["auroc", "auprc", "sensitivity", "specificity", "precision", "f1"]
     return {
         n: {"mean": float(np.mean([getattr(r, n) for r in results])),

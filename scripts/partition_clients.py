@@ -1,13 +1,3 @@
-"""
-Non-IID Dirichlet client partitioning for federated learning.
-
-Partitions the training set across K clients using a Dirichlet distribution
-to create heterogeneous (non-IID) label distributions. Saves per-client
-index arrays and generates a distribution histogram for the paper.
-
-Usage:
-    python scripts/partition_clients.py --data_dir data/ptb-xl --alpha 0.5 --num_clients 10
-"""
 from __future__ import annotations
 
 import argparse

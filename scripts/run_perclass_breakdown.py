@@ -1,17 +1,5 @@
 """
-run_perclass_breakdown.py — Person C (Kaan), Sprint 3
-======================================================
 Per-class anomaly detection breakdown: MI, STTC, HYP, CD.
-
-Sprint 3 updates:
-  - bottleneck=128 for all models
-  - CosineAnnealingWarmRestarts + grad clip
-  - patience=25, epochs=200
-  - Default data_dir=data/ptb-xl-zscore
-
-FIX (Sprint 4): VAE now uses proper VAE class + VAEArchitectureConfig +
-  MSE-only anomaly scoring (alpha=0.0), matching vae_baselines.csv pipeline.
-  ConvAE and VanillaAE inline implementations are unchanged.
 
 Usage:
     python scripts/run_perclass_breakdown.py --data_dir data/ptb-xl-zscore
@@ -166,7 +154,7 @@ def make_synthetic(quick=False):
     return {"train_x": train_x, "val_normal_x": val_normal_x, "test_x": torch.cat(px), "test_y": torch.cat(py), "test_sub": torch.cat(ps)}
 
 
-# ── Training (Sprint 3: cosine annealing + grad clip) ──
+# ── Training (cosine annealing + grad clip) ──
 # Used for ConvAE and VanillaAE only. VAE uses its own VAETrainer via checkpoint.
 
 def train_generic(model, train_x, val_x, device, epochs, patience=25):
@@ -289,7 +277,7 @@ def load_vae(seed: int, device: torch.device, train_first: bool,
       3. Train from scratch using proper VAE class + CosineAnnealing
     """
     cfg = VAEConfig()
-    cfg.architecture.latent_dim = DEFAULT_BN  # 128, consistent with Sprint 3
+    cfg.architecture.latent_dim = DEFAULT_BN  # 128
     model = VAE(cfg.architecture).to(device)
 
     if not train_first:
@@ -470,7 +458,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sprint 3 — Per-class breakdown (Person C)"
+        description="Per-class breakdown (Person C)"
     )
     parser.add_argument("--data_dir", default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic", action="store_true")

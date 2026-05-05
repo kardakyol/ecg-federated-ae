@@ -1,10 +1,3 @@
-"""
-GHOUSE: Run this after preprocessing to validate data format.
-    python scripts/validate_data.py --data_dir data/ptb-xl
-
-Checks dtype, shape, label encoding, NaN/Inf, and length matching.
-If all pass, data is ready for Shardul, Kaan, Raheeb, and everyone else.
-"""
 import argparse, sys
 from pathlib import Path
 import numpy as np

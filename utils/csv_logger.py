@@ -1,14 +1,3 @@
-"""
-SHARED CSV LOGGER - standardised output format for all experiments.
-
-WHY: If everyone logs results in different CSV formats, merging for the
-paper becomes a nightmare. This ensures uniform column names.
-
-USAGE:
-    from utils.csv_logger import ResultLogger
-    logger = ResultLogger("outputs/results.csv")
-    logger.log(model="vae", setting="centralised", seed=42, auroc=0.92)
-"""
 import csv
 from pathlib import Path
 from typing import Any

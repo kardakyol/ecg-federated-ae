@@ -1,8 +1,3 @@
-"""
-RAHEEB: Flower FL server — FedAvg simulation for ECG anomaly detection.
-Updated for Sprint 2 completion and Sprint 3 metric alignment.
-"""
-
 import argparse
 import logging
 from typing import Dict, List, Tuple, Optional
@@ -144,7 +139,7 @@ def main():
         "seed": args.seed,
     }
 
-    # Strategy configuration for Sprint 2 (30% client participation 
+    # Strategy configuration (30% client participation)
     strategy = Strategy(
         fraction_fit=0.3,
         fraction_evaluate=0.3,

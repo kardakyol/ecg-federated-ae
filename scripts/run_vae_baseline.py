@@ -148,9 +148,9 @@ def run_single_experiment(
 def main():
     parser = argparse.ArgumentParser(description="VAE Centralised Baselines")
     parser.add_argument("--data_dir", type=str, default="data/ptb-xl",
-                        help="Path to Ghouse preprocessed PTB-XL data")
+                        help="Path to preprocessed PTB-XL data")
     parser.add_argument("--synthetic", action="store_true",
-                        help="Use synthetic data (before Ghouse data ready)")
+                        help="Use synthetic data (before data ready)")
     parser.add_argument("--quick", action="store_true",
                         help="Quick test: 1 beta, 1 seed, 5 epochs")
     parser.add_argument("--device", type=str, default="cuda",
@@ -173,7 +173,7 @@ def main():
 
     # Load data
     if args.synthetic:
-        logger.info("Using SYNTHETIC data (Ghouse data not ready)")
+        logger.info("Using SYNTHETIC data")
         splits = create_synthetic_data(n_train=2000, n_val=500, n_test=500)
     else:
         logger.info(f"Loading PTB-XL from {args.data_dir}")
@@ -246,7 +246,7 @@ def main():
                 save_path=f"{args.fig_dir}/vae_pr_curves.pdf")
 
     logger.info(f"\nResults saved to: {args.output_dir}/vae_baselines.csv")
-    logger.info("Sprint 1 Person C deliverables complete.")
+    logger.info("Deliverables complete.")
 
 
 if __name__ == "__main__":

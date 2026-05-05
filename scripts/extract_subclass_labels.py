@@ -1,5 +1,5 @@
 """
-extract_subclass_labels.py — Person C (Kaan), Sprint 3
+extract_subclass_labels.py
 =======================================================
 Extracts MI, STTC, HYP, CD per-sample labels from PTB-XL metadata
 and saves them as test_subclass_labels.npy for per-class breakdown.
@@ -142,13 +142,6 @@ def extract_labels(raw_dir: str, data_dir: str) -> None:
     for cls_int, cnt in counts.items():
         name = SUPERCLASS_NAMES.get(cls_int, "UNKNOWN")
         print(f"  {name:6s} ({cls_int:2d}): {cnt:5d}")
-
-    # ── Match to preprocessed splits ──
-    # Ghouse's preprocessing saved per-split indices.
-    # We need to figure out which ecg_ids correspond to each split.
-    # The safest approach: use strat_fold for train/val/test alignment.
-    #   PTB-XL convention: strat_fold 9-10 = test, 8 = val, 1-7 = train
-    # This matches the standard 70/15/15 split.
 
     print("\nMatching to train/val/test splits via strat_fold...")
 

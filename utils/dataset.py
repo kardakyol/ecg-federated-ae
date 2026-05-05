@@ -1,20 +1,12 @@
 """
 SHARED DATASET UTILITIES - everyone uses the same data loading code.
 
-WHY THIS EXISTS:
-    Ghouse (Person A) outputs preprocessed data. Everyone else loads it
-    through this module. If Shardul writes his own loader and Kaan writes
-    another, format mismatches cause silent bugs (e.g. channels-first
-    vs channels-last).
-
 SUPPORTED FORMATS:
     A) {split}_signals.npy + {split}_labels.npy  (preferred)
     B) {split}.pt with {"signals": ..., "labels": ...}
 
 AUTO-FIX: handles (N, 1000, 12) -> (N, 12, 1000) transpose automatically.
 
-WHO USES THIS:
-    Everyone who touches data: Shardul, Kaan, Raheeb, Ghadah, Hilal, Ghouse.
 """
 from __future__ import annotations
 import logging
@@ -47,12 +39,12 @@ class ECGDataset(Dataset):
 
 
 def load_splits(data_dir: str | Path) -> Dict[str, ECGDataset]:
-    """Load Ghouse preprocessed PTB-XL splits. Supports .npy and .pt formats."""
+    """Load preprocessed PTB-XL splits. Supports .npy and .pt formats."""
     data_dir = Path(data_dir)
     if not data_dir.exists():
         raise FileNotFoundError(
             f"Data dir not found: {data_dir}\n"
-            f"Ensure Ghouse preprocessing pipeline has run.\n"
+            f"Ensure preprocessing pipeline has run.\n"
             f"Expected: {data_dir}/train_signals.npy + train_labels.npy"
         )
     splits = {}
@@ -107,7 +99,7 @@ def create_dataloaders(splits: Dict[str, ECGDataset], batch_size=128, num_worker
 
 
 def create_synthetic_data(n_train=2000, n_val=500, n_test=500, abnormal_ratio=0.2, seed=42) -> Dict[str, ECGDataset]:
-    """Synthetic ECG-like data for pipeline testing before Ghouse data is ready."""
+    """Synthetic ECG-like data for pipeline testing before data is ready."""
     rng = np.random.RandomState(seed)
     t = np.linspace(0, 10, 1000)
     splits = {}

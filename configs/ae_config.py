@@ -4,11 +4,7 @@ from typing import List
 
 @dataclass
 class AEConfig:
-    """Vanilla AE and Conv AE training Hyperparameters.
-
-    Updated Sprint 3: bottleneck=128, epochs=200 based on ablation results.
-    """
-
+    """Vanilla AE and Conv AE training Hyperparameters."""
     bottleneck: int = 128
     n_leads: int = 12
     seq_len: int = 1000

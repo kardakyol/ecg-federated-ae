@@ -9,10 +9,6 @@ USAGE:
     from evaluation.compute_cost import compute_all_costs
     costs = compute_all_costs(model, device)
     logger.log(model="conv_ae", **costs)
-
-WHO USES THIS:
-    Ghadah   - quantisation efficiency table
-    Everyone - ablation study, paper Table II (computation efficiency)
 """
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
 """
-BOTTLENECK ABLATION — Sprint 3 (Persons B + C)
+BOTTLENECK ABLATION
 ================================================
 Tests {8, 16, 32, 64, 128} for vanilla_ae, conv_ae, and vae.
-Uses Sprint 3 optimised training (cosine annealing, grad clip, val MSE early stop).
+Uses optimised training (cosine annealing, grad clip, val MSE early stop).
 
 Produces: outputs/ablation_bottleneck.csv
 
@@ -40,7 +40,7 @@ MODEL_REGISTRY = {
     "conv_ae":    lambda bottleneck: ConvAE(bottleneck=bottleneck),
 "vae":        lambda bottleneck: VAE(config=VAEArchitectureConfig(latent_dim=bottleneck))}
 
-# Sprint 3: added bn=8 to ablation range
+# Added bn=8 to ablation range
 BOTTLENECK_SIZES = [8, 16, 32, 64, 128]
 
 
@@ -71,12 +71,12 @@ def find_threshold(model, val_normal_loader, device, percentile=95):
 
 def train_single(model_name, bottleneck, loaders, seed, device,
                  epochs=200, lr=1e-3, weight_decay=1e-5, patience=25):
-    """Train one model config with Sprint 3 optimised loop."""
+    """Train one model config with optimised loop."""
     set_seed(seed)
 
     model = MODEL_REGISTRY[model_name](bottleneck=bottleneck).to(device)
 
-    # Sprint 3: CosineAnnealingWarmRestarts (matches max_auroc_pipeline)
+    # CosineAnnealingWarmRestarts (matches max_auroc_pipeline)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=20, T_mult=2, eta_min=1e-6
@@ -101,13 +101,13 @@ def train_single(model_name, bottleneck, loaders, seed, device,
             output = model(signals)
             loss = model.compute_loss(signals, output)[0]
             loss.backward()
-            # Sprint 3: gradient clipping
+            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step(epoch + batch_idx / max(len(loaders["train"]), 1))
             epoch_losses.append(loss.item())
 
-        # Sprint 3: validate on val MSE (not AUROC)
+        # Validate on val MSE (not AUROC)
         model.eval()
         val_mse_sum, n_val = 0.0, 0
         with torch.no_grad():
@@ -151,7 +151,7 @@ def train_single(model_name, bottleneck, loaders, seed, device,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bottleneck Ablation — Sprint 3")
+    parser = argparse.ArgumentParser(description="Bottleneck Ablation")
     parser.add_argument("--data_dir", type=str, default="data/ptb-xl-zscore")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=str, default=None,
@@ -177,7 +177,7 @@ def main():
 
     loaders = create_dataloaders(splits, batch_size=args.batch_size)
 
-    # Sprint 3: all 3 models by default, bn 8-128
+    # All 3 models by default, bn 8-128
     models_to_run = [args.model] if args.model else ["vanilla_ae", "conv_ae", "vae"]
     bottlenecks = args.bottlenecks or BOTTLENECK_SIZES
     seeds = args.seeds or SEEDS

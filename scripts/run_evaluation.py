@@ -293,7 +293,7 @@ def main() -> None:
     figures_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("Evaluation Automation — Sprint 2")
+    logger.info("Evaluation Automation")
     logger.info("=" * 60)
 
     df = load_results(args.results)

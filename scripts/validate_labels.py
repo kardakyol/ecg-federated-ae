@@ -1,7 +1,7 @@
 """
 LABEL MAPPING VALIDATION — PTB-XL scp_statements → binary labels
 ==================================================================
-Checks whether Ghouse's normal/abnormal labelling is correct by
+Checks whether normal/abnormal labelling is correct by
 inspecting the raw PTB-XL metadata.
 
 PTB-XL label hierarchy:
@@ -10,17 +10,11 @@ PTB-XL label hierarchy:
       NORM, MI, STTC, HYP, CD (5 superclasses)
   - Standard anomaly detection: NORM → label=0, everything else → label=1
 
-Common mistakes:
-  1. Using "superclass" column instead of "diagnostic_class"
-  2. Including non-diagnostic codes (rhythm, form) in abnormal
-  3. Dropping records with mixed labels
-  4. Wrong threshold for scp_code likelihood
-
 USAGE (Colab):
     # Point to RAW PTB-XL directory (not preprocessed):
     !python validate_labels.py --raw_dir data/ptb-xl-raw/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.3
 
-    # Also check Ghouse's preprocessed labels:
+    # Also check preprocessed labels:
     !python validate_labels.py --raw_dir data/ptb-xl-raw/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.3 --check_preprocessed data/ptb-xl
 """
 
@@ -228,7 +222,7 @@ def validate_labels(raw_dir, check_preprocessed=None):
             print(f"    Abnormal: {n_abn} ({100*n_abn/max(total_sub,1):.1f}%)")
             print(f"    No diag: {n_nodiag}")
 
-    # ── 4. Compare with Ghouse's preprocessed labels ──
+    # ── 4. Compare with preprocessed labels ──
     if check_preprocessed:
         print(f"\n{'='*60}")
         print(f"  COMPARISON WITH PREPROCESSED LABELS")
@@ -272,12 +266,11 @@ def validate_labels(raw_dir, check_preprocessed=None):
             abn_pct = 100 * (labels == 1).sum() / len(labels)
             print(f"\n  {split_name} abnormal ratio: {abn_pct:.1f}%")
             if abn_pct > 60:
-                print(f"    ⚠️  HIGH ABNORMAL RATIO — check label mapping")
+                print(f"     HIGH ABNORMAL RATIO — check label mapping")
             elif abn_pct < 30:
-                print(f"    ⚠️  LOW ABNORMAL RATIO — might be under-labelling")
+                print(f"     LOW ABNORMAL RATIO — might be under-labelling")
             else:
-                print(f"    ✓ Ratio looks reasonable")
-
+                print(f" Ratio looks reasonable")
     print(f"\n{'='*60}")
     print(f"  SUMMARY & RECOMMENDATIONS")
     print(f"{'='*60}")
@@ -293,6 +286,6 @@ if __name__ == "__main__":
     parser.add_argument("--raw_dir", type=str, required=True,
                         help="Path to raw PTB-XL directory")
     parser.add_argument("--check_preprocessed", type=str, default=None,
-                        help="Path to Ghouse's preprocessed data for comparison")
+                        help="Path to preprocessed data for comparison")
     args = parser.parse_args()
     validate_labels(args.raw_dir, args.check_preprocessed)

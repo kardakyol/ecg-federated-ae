@@ -1,16 +1,3 @@
-"""
-1D Convolutional Autoencoder — Updated Sprint 3
-=================================================
-Best config from ablation: bottleneck=128, lr=1e-3
-AUROC: 0.795 ± 0.004 on PTB-XL z-score data (max_auroc_pipeline)
-
-Changes from Sprint 2:
-  - Default bottleneck: 32 → 128 (ablation proved larger = better)
-  - No other architectural changes (backward compatible)
-  - Still uses GroupNorm + inplace=False (Opacus compatible)
-  - AEOutput interface unchanged (Raheeb/Ghadah/Hilal unaffected)
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,7 +10,7 @@ class ConvAE(BaseAutoencoder):
     """1D Convolutional Autoencoder.
 
     Args:
-        bottleneck: Latent dimension size. Default 128 (Sprint 3 best).
+        bottleneck: Latent dimension size. Default 128.
                     Ablation tested {8, 16, 32, 64, 128}.
         n_leads: Number of ECG leads. Default 12 for PTB-XL.
         seq_len: Number of time steps per lead. Default 1000 (100 Hz x 10s).

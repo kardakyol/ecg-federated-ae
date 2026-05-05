@@ -1,15 +1,5 @@
 """
-SHARDUL + KAAN: Centralised AE training script — Sprint 3 update.
-
-Changes from Sprint 2:
-  - CosineAnnealingWarmRestarts instead of ReduceLROnPlateau
-  - Gradient clipping (max_norm=1.0)
-  - Early stopping on best_val_mse (not val_auroc — faster, more stable)
-  - patience=25 (was implicit via scheduler)
-  - weight_decay=1e-5
-  - Default bottleneck=128 (from AEConfig)
-  - Default data_dir=data/ptb-xl-zscore
-
+Centralised AE training script 
 These changes match max_auroc_pipeline.py training loop exactly.
 AUROC improvement: 0.60 → 0.795 (ConvAE, bn=128, z-score data).
 
@@ -73,7 +63,7 @@ def find_threshold(model, val_normal_loader, device, percentile=95):
 
 
 def train_one_seed(model_name, config, loaders, seed, device, logger):
-    """Train one model with one seed using Sprint 3 optimised loop."""
+    """Train one model with one seed using optimised loop."""
     set_seed(seed)
 
     ModelClass = MODEL_REGISTRY[model_name]
@@ -83,7 +73,7 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
         seq_len=config.seq_len,
     ).to(device)
 
-    # Sprint 3: CosineAnnealingWarmRestarts (from max_auroc_pipeline)
+    # CosineAnnealingWarmRestarts (from max_auroc_pipeline)
     optimizer = optim.Adam(
         model.parameters(),
         lr=config.lr,
@@ -118,7 +108,7 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
             loss = loss_tuple[0]
             loss.backward()
 
-            # Sprint 3: gradient clipping
+            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
 
             optimizer.step()
@@ -138,7 +128,7 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
                 n_val += 1
         avg_val_mse = val_mse_sum / max(n_val, 1)
 
-        # Sprint 3: early stopping on best_val_mse
+        # Early stopping on best_val_mse
         if avg_val_mse < best_val_mse:
             best_val_mse = avg_val_mse
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -208,7 +198,7 @@ def train_one_seed(model_name, config, loaders, seed, device, logger):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Centralised AE training (Shardul + Kaan)")
+    parser = argparse.ArgumentParser(description="Centralised AE training")
     parser.add_argument("--model", type=str, required=True,
                         choices=["vanilla_ae", "conv_ae"],
                         help="Which model to train")

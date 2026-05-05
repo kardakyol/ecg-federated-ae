@@ -1,7 +1,5 @@
 """
 RAW PTB-XL PREPROCESSING — wfdb → bandpass → z-score
-======================================================
-Complete preprocessing from scratch, bypassing Ghouse's pipeline.
 
 Pipeline:
   1. Load raw signals via wfdb (500 Hz or 100 Hz)

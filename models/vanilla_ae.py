@@ -9,7 +9,6 @@ class VanillaAE(BaseAutoencoder):
     """Fully connected autoencoder with symmetric encoder-decoder. 
       Args:
         bottleneck: Latent dimension size. Default 32 per roadmap spec.
-                    Sprint 3 ablation will test {16, 32, 64, 128}.
         n_leads: Number of ECG leads. Default 12 for PTB-XL.
         seq_len: Number of time steps per lead. Default 1000 (100 Hz x 10s).
     """

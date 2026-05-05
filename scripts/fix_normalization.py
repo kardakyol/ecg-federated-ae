@@ -1,8 +1,5 @@
 """
 FIX PREPROCESSING: Min-Max → Per-Lead Z-Score Normalization
-=============================================================
-Ghouse's pipeline applied per-lead min-max scaling [0,1].
-This kills anomaly detection because MSE differences become tiny.
 
 This script:
   1. Loads existing train/val/test .npy files
@@ -114,7 +111,7 @@ def fix_normalization(data_dir, output_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to Ghouse's preprocessed data (min-max scaled)")
+                        help="Path to preprocessed data (min-max scaled)")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Output path (default: {data_dir}-zscore)")
     args = parser.parse_args()

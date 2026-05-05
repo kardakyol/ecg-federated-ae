@@ -1,7 +1,3 @@
-"""
-SHARED PLOTTING - same style, colors, DPI for all figures in the paper.
-300 dpi, IEEE Access compatible. Everyone imports from here.
-"""
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -50,7 +46,6 @@ def plot_pr(results: Dict[str, MetricsResult], title="PR Curves",
 def plot_bar_comparison(data: Dict[str, Dict[str, Dict[str, float]]],
                         metrics=None, title="Model Comparison",
                         save_path: Optional[str] = None) -> plt.Figure:
-    """Grouped bar chart with error bars for paper figures."""
     if metrics is None:
         metrics = ["auroc", "auprc", "sensitivity", "specificity", "f1"]
     models = list(data.keys())
